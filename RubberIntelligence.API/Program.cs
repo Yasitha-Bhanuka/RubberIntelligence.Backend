@@ -24,14 +24,20 @@ builder.Services.AddSwaggerGen();
 
 // Configure JWT Settings
 var jwtSection = builder.Configuration.GetSection(JwtSettings.SectionName);
+// Configure JWT Settings (Centralized to ensure consistency)
+var jwtKey = Environment.GetEnvironmentVariable("JWT_KEY") ?? jwtSection["Key"]!;
+var jwtIssuer = jwtSection["Issuer"]!;
+var jwtAudience = jwtSection["Audience"]!;
+var jwtExpiryMinutes = int.Parse(jwtSection["ExpiryMinutes"]!);
+
 builder.Services.Configure<JwtSettings>(options =>
 {
-    // Prefer Environment Variable if available
-    options.Key = Environment.GetEnvironmentVariable("JWT_KEY") ?? jwtSection["Key"]!;
-    options.Issuer = jwtSection["Issuer"]!;
-    options.Audience = jwtSection["Audience"]!;
-    options.ExpiryMinutes = int.Parse(jwtSection["ExpiryMinutes"]!);
+    options.Key = jwtKey;
+    options.Issuer = jwtIssuer;
+    options.Audience = jwtAudience;
+    options.ExpiryMinutes = jwtExpiryMinutes;
 });
+
 var jwtSettings = jwtSection.Get<JwtSettings>();
 
 // Configure MongoDB Settings
@@ -62,10 +68,29 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtSettings?.Issuer,
-            ValidAudience = jwtSettings?.Audience,
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtSettings?.Key!))
+                Encoding.UTF8.GetBytes(jwtKey))
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine($"Authentication Failed: {context.Exception.Message}");
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                Console.WriteLine("Token Validated Successfully");
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                Console.WriteLine($"OnChallenge: {context.Error}, {context.ErrorDescription}");
+                return Task.CompletedTask;
+            }
         };
     });
 
