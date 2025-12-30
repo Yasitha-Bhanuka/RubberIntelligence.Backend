@@ -5,6 +5,7 @@ using RubberIntelligence.API.Domain.Entities;
 using RubberIntelligence.API.Modules.DiseaseDetection.DTOs;
 using RubberIntelligence.API.Modules.DiseaseDetection.Services;
 using System.Security.Claims;
+using MongoDB.Driver;
 
 namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
 {
@@ -57,6 +58,24 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
 
             // 4. Return Result
             return Ok(result);
+        }
+        [HttpGet("history")]
+        public async Task<IActionResult> GetHistory()
+        {
+            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdString, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            var filter = Builders<DiseaseRecord>.Filter.Eq(r => r.UserId, userId);
+            var history = await _context.DiseaseRecords
+                                        .Find(filter)
+                                        .SortByDescending(r => r.Timestamp)
+                                        .Limit(20) // Limit to last 20
+                                        .ToListAsync();
+
+            return Ok(history);
         }
     }
 }
