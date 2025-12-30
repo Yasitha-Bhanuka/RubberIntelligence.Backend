@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using RubberIntelligence.API.Services;
+using RubberIntelligence.API.Domain.Entities;
+using RubberIntelligence.API.Domain.Enums;
+using RubberIntelligence.API.Infrastructure.Security;
 
 namespace RubberIntelligence.API.Controllers
 {
@@ -13,43 +15,56 @@ namespace RubberIntelligence.API.Controllers
     [Route("api/[controller]")]
     public class AuthController : ControllerBase
     {
-        private readonly TokenService _tokenService;
+        private readonly JwtTokenService _jwtTokenService;
 
-        public AuthController(TokenService tokenService)
+        public AuthController(JwtTokenService jwtTokenService)
         {
-            _tokenService = tokenService;
+            _jwtTokenService = jwtTokenService;
         }
 
         [HttpPost("login")]
         public IActionResult Login([FromBody] LoginDto loginDto)
         {
             // Simulate Database User/Role Fetch
-            string role = "";
+            User? user = null;
 
             if (loginDto.Email == "farmer@test.com" && loginDto.Password == "pass123")
             {
-                role = "grower";
+                user = new User 
+                { 
+                    Id = Guid.NewGuid(), 
+                    Email = loginDto.Email, 
+                    Role = UserRole.Farmer, 
+                    FullName = "John Planter"
+                };
             }
             else if (loginDto.Email == "admin@test.com" && loginDto.Password == "pass123")
             {
-                role = "admin";
+                user = new User
+                {
+                    Id = Guid.NewGuid(),
+                    Email = loginDto.Email,
+                    Role = UserRole.Admin,
+                    FullName = "Admin User"
+                };
             }
-            else
+
+            if (user == null)
             {
                 return Unauthorized("Invalid Credentials");
             }
 
             // Generate Token
-            var token = _tokenService.CreateToken(loginDto.Email, role);
+            var token = _jwtTokenService.GenerateToken(user);
 
             return Ok(new
             {
                 Token = token,
                 User = new
                 {
-                    Email = loginDto.Email,
-                    Role = role,
-                    Name = role == "grower" ? "John Planter" : "Admin User"
+                    Email = user.Email,
+                    Role = user.Role.ToString().ToLower(), // Lowercase to match frontend
+                    Name = user.FullName
                 }
             });
         }
