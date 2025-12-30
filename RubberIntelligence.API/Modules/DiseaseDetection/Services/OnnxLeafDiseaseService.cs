@@ -13,15 +13,22 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
         private readonly string _modelPath;
         private readonly InferenceSession _session;
         private readonly string[] _labels = { "Anthracnose", "Dry_Leaf", "Healthy", "Leaf_Spot" };
+        private readonly ILogger<OnnxLeafDiseaseService> _logger;
 
-        public OnnxLeafDiseaseService(IWebHostEnvironment env)
+        public OnnxLeafDiseaseService(IWebHostEnvironment env, ILogger<OnnxLeafDiseaseService> logger)
         {
+            _logger = logger;
             _modelPath = Path.Combine(env.ContentRootPath, "Modules", "DiseaseDetection", "Models", "rubber_leaf_disease_model.onnx");
             
             // Only load session if file exists (Output useful error if not)
             if (File.Exists(_modelPath))
             {
                 _session = new InferenceSession(_modelPath);
+                _logger.LogInformation($"[AI] ONNX Model loaded successfully from {_modelPath}");
+            }
+            else
+            {
+                _logger.LogError($"[AI] ONNX Model NOT FOUND at {_modelPath}");
             }
         }
 
@@ -32,6 +39,8 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             {
                 return await new MockDiseaseService().PredictAsync(request);
             }
+
+            _logger.LogInformation("[AI] Starting ONNX Inference for Leaf Disease...");
 
             if (_session == null)
             {
@@ -88,6 +97,8 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             // 6. Map to Result
             string predictedLabel = _labels[maxIndex];
             string remedy = GetRemedy(predictedLabel);
+
+            _logger.LogInformation($"[AI] Inference Complete. Prediction: {predictedLabel}, Confidence: {maxScore:P2}");
             
             return new PredictionResponse
             {
