@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using RubberIntelligence.API.Domain.Entities;
-using RubberIntelligence.API.Domain.Enums;
+using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Infrastructure.Security;
 
 namespace RubberIntelligence.API.Controllers
@@ -16,40 +15,22 @@ namespace RubberIntelligence.API.Controllers
     public class AuthController : ControllerBase
     {
         private readonly JwtTokenService _jwtTokenService;
+        private readonly IUserRepository _userRepository;
 
-        public AuthController(JwtTokenService jwtTokenService)
+        public AuthController(JwtTokenService jwtTokenService, IUserRepository userRepository)
         {
             _jwtTokenService = jwtTokenService;
+            _userRepository = userRepository;
         }
 
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginDto loginDto)
+        public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
         {
-            // Simulate Database User/Role Fetch
-            User? user = null;
+            // Fetch User from MongoDB
+            var user = await _userRepository.GetByEmailAsync(loginDto.Email);
 
-            if (loginDto.Email == "farmer@test.com" && loginDto.Password == "pass123")
-            {
-                user = new User 
-                { 
-                    Id = Guid.NewGuid(), 
-                    Email = loginDto.Email, 
-                    Role = UserRole.Farmer, 
-                    FullName = "John Planter"
-                };
-            }
-            else if (loginDto.Email == "admin@test.com" && loginDto.Password == "pass123")
-            {
-                user = new User
-                {
-                    Id = Guid.NewGuid(),
-                    Email = loginDto.Email,
-                    Role = UserRole.Admin,
-                    FullName = "Admin User"
-                };
-            }
-
-            if (user == null)
+            // Validate User & Password (Plaintext for now as per previous logic)
+            if (user == null || user.PasswordHash != loginDto.Password)
             {
                 return Unauthorized("Invalid Credentials");
             }
@@ -63,7 +44,7 @@ namespace RubberIntelligence.API.Controllers
                 User = new
                 {
                     Email = user.Email,
-                    Role = user.Role.ToString().ToLower(), // Lowercase to match frontend
+                    Role = user.Role.ToString().ToLower(), // "farmer", "admin"
                     Name = user.FullName
                 }
             });
