@@ -55,6 +55,7 @@ builder.Services.AddTransient<DbSeeder>();
 // Register Module Services
 // builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IDiseaseDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.MockDiseaseService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IDiseaseDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.PriceForecasting.Services.IPriceForecastingService, RubberIntelligence.API.Modules.PriceForecasting.Services.OnnxPriceForecastingService>();
 
 // Register Infrastructure Services
 builder.Services.AddScoped<JwtTokenService>();
