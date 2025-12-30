@@ -15,5 +15,6 @@ namespace RubberIntelligence.API.Data
         }
 
         public IMongoCollection<User> Users => _database.GetCollection<User>("Users");
+        public IMongoCollection<DiseaseRecord> DiseaseRecords => _database.GetCollection<DiseaseRecord>("DiseaseRecords");
     }
 }
