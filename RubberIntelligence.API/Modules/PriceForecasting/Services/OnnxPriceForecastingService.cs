@@ -73,7 +73,46 @@ namespace RubberIntelligence.API.Modules.PriceForecasting.Services
             var outputTensor = results.First().AsTensor<float>();
             float predictedPrice = outputTensor[0];
 
-            _logger.LogInformation($"[PriceAI] Prediction Result: {predictedPrice}");
+            _logger.LogInformation($"[PriceAI] Base Model Price: {predictedPrice}");
+
+            // --- Rules-Based Adjustments ---
+
+            // 1. Moisture Penalty: Reduce 0.5% per 1% of moisture
+            if (request.MoistureContentPct > 0)
+            {
+                float moisturePenalty = request.MoistureContentPct * 0.005f; 
+                predictedPrice *= (1.0f - moisturePenalty);
+                _logger.LogInformation($"[PriceAI] Applied Moisture Penalty: -{moisturePenalty:P1}");
+            }
+
+            // 2. Dirt Penalty: Reduce 1% per 1% of dirt
+            if (request.DirtContentPct > 0)
+            {
+                float dirtPenalty = request.DirtContentPct * 0.01f;
+                predictedPrice *= (1.0f - dirtPenalty);
+                _logger.LogInformation($"[PriceAI] Applied Dirt Penalty: -{dirtPenalty:P1}");
+            }
+
+            // 3. Market Availability Adjustment
+            if (!string.IsNullOrEmpty(request.MarketAvailability))
+            {
+                if (request.MarketAvailability.Contains("1 week", StringComparison.OrdinalIgnoreCase))
+                {
+                    predictedPrice *= 0.98f; // -2%
+                    _logger.LogInformation("[PriceAI] Applied Availability Penalty: -2% (1 week)");
+                }
+                else if (request.MarketAvailability.Contains("2 weeks", StringComparison.OrdinalIgnoreCase))
+                {
+                    predictedPrice *= 0.95f; // -5%
+                    _logger.LogInformation("[PriceAI] Applied Availability Penalty: -5% (2 weeks)");
+                }
+                 // "Immediately" gets no penalty (or could get a bonus)
+            }
+
+            // Ensure price doesn't go negative
+            if (predictedPrice < 0) predictedPrice = 0;
+
+            _logger.LogInformation($"[PriceAI] Final Adjusted Price: {predictedPrice}");
 
             return new PricePredictionResponse
             {

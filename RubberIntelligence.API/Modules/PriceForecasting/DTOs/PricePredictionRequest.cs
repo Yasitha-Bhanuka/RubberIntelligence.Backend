@@ -8,5 +8,6 @@ namespace RubberIntelligence.API.Modules.PriceForecasting.DTOs
         public float DirtContentPct { get; set; }
         public float VisualQualityScore { get; set; }
         public string District { get; set; } = string.Empty; // e.g., "Galle"
+        public string MarketAvailability { get; set; } = string.Empty; // e.g., "Immediately"
     }
 }
