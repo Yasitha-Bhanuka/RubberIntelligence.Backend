@@ -81,5 +81,25 @@ namespace RubberIntelligence.API.Modules.PriceForecasting.Services
                 Currency = "LKR"
             };
         }
+
+        public async Task<IEnumerable<PriceHistoryItem>> GetPriceHistoryAsync()
+        {
+            // Mock data for now - in a real app this would come from a database
+            var history = new List<PriceHistoryItem>();
+            var today = DateTime.Today;
+            var random = new Random();
+
+            for (int i = 30; i >= 0; i--)
+            {
+                history.Add(new PriceHistoryItem
+                {
+                    Date = today.AddDays(-i),
+                    Price = 500 + (random.NextDouble() * 100 - 50), // Random fluctuation around 500
+                    Grade = "RSS1"
+                });
+            }
+
+            return await Task.FromResult(history);
+        }
     }
 }
