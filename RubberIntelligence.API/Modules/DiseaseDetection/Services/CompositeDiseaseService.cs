@@ -7,11 +7,13 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
     {
         private readonly OnnxLeafDiseaseService _leafService;
         private readonly OnnxPestDetectionService _pestService;
+        private readonly PlantNetWeedService _weedService;
 
-        public CompositeDiseaseService(OnnxLeafDiseaseService leafService, OnnxPestDetectionService pestService)
+        public CompositeDiseaseService(OnnxLeafDiseaseService leafService, OnnxPestDetectionService pestService, PlantNetWeedService weedService)
         {
             _leafService = leafService;
             _pestService = pestService;
+            _weedService = weedService;
         }
 
         public async Task<PredictionResponse> PredictAsync(PredictionRequest request)
@@ -20,7 +22,11 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             {
                 return await _pestService.PredictAsync(request);
             }
-               // Default to Leaf Disease for now (Type 0 = Leaf Disease, Type 2 = Weed could also be mapped if needed)
+            else if (request.Type == DiseaseType.Weed)
+            {
+                return await _weedService.PredictAsync(request);
+            }
+            // Default to Leaf Disease
             else
             {
                 return await _leafService.PredictAsync(request);
