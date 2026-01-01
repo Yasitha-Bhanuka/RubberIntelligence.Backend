@@ -58,8 +58,10 @@ builder.Services.AddTransient<DbSeeder>();
 
 // Register Module Services
 // Register Disease Detection Strategy
+builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>(); // Type-Client
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxPestDetectionService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IDiseaseDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.CompositeDiseaseService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.PriceForecasting.Services.IPriceForecastingService, RubberIntelligence.API.Modules.PriceForecasting.Services.OnnxPriceForecastingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGradingService, RubberIntelligence.API.Modules.Grading.Services.OnnxGradingService>();
