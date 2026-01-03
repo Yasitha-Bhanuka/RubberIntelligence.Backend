@@ -50,8 +50,8 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 var json = JsonSerializer.Serialize(requestBody);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                // Use Gemini 1.5 Flash for speed and cost-effectiveness
-                var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={_apiKey}";
+                // Use Gemini Model as requested by user
+                var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={_apiKey}";
 
                 var response = await _httpClient.PostAsync(url, content);
                 
