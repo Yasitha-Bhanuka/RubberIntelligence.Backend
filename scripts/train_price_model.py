@@ -29,15 +29,43 @@ print(f"Loading {csv_path}...")
 df = pd.read_csv(csv_path)
 
 # 2. Define Features & Target
+# 2. Define Features & Target
 TARGET = 'auction_price_lkr_per_kg'
-NUMERIC_FEATURES = ['quantity_kg', 'moisture_content_pct', 'dirt_content_pct', 'visual_quality_score']
-CATEGORICAL_FEATURES = ['rubber_sheet_grade', 'district']
+# UPDATED: Removed numeric moisture/dirt, added categorical versions
+NUMERIC_FEATURES = ['quantity_kg', 'visual_quality_score']
+CATEGORICAL_FEATURES = ['rubber_sheet_grade', 'district', 'Moisture_Level', 'Cleanliness']
+
+# DATA TRANSFORMATION: Create categorical columns if they don't exist
+# This allows training on the existing dataset which only has numeric pct
+if 'Moisture_Level' not in df.columns:
+    print("Creating synthetic 'Moisture_Level' from 'moisture_content_pct'...")
+    conditions = [
+        (df['moisture_content_pct'] < 1.0),
+        (df['moisture_content_pct'] >= 1.0) & (df['moisture_content_pct'] <= 3.0),
+        (df['moisture_content_pct'] > 3.0)
+    ]
+    choices = ['Dry', 'Normal', 'Wet']
+    # Use 'Normal' as default if NaN or outside range, though dataset should be clean
+    df['Moisture_Level'] = np.select(conditions, choices, default='Normal')
+
+if 'Cleanliness' not in df.columns:
+    print("Creating synthetic 'Cleanliness' from 'dirt_content_pct'...")
+    conditions = [
+        (df['dirt_content_pct'] < 1.0),
+        (df['dirt_content_pct'] >= 1.0) & (df['dirt_content_pct'] <= 3.0),
+        (df['dirt_content_pct'] > 3.0)
+    ]
+    choices = ['Clean', 'Slight', 'Dirty']
+    df['Cleanliness'] = np.select(conditions, choices, default='Slight')
+
+print("Features configured.")
+print(f"Numeric: {NUMERIC_FEATURES}")
+print(f"Categorical: {CATEGORICAL_FEATURES}")
 
 X = df[NUMERIC_FEATURES + CATEGORICAL_FEATURES]
 y = df[TARGET]
 
 # FIX: Fill missing categorical values in Pandas to avoid ONNX SimpleImputer error
-# skl2onnx does not support SimpleImputer(missing_values=np.nan) for Strings well
 X[CATEGORICAL_FEATURES] = X[CATEGORICAL_FEATURES].fillna("Unknown")
 
 # 3. Define Preprocessing Pipeline
@@ -91,8 +119,8 @@ for name in CATEGORICAL_FEATURES:
 
 # Convert
 onnx_model = convert_sklearn(
-    pipeline, 
-    initial_types=initial_types, 
+    pipeline,
+    initial_types=initial_types,
     target_opset=12,
     doc_string="Rubber Price Predictor"
 )
