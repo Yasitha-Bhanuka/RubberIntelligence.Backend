@@ -66,6 +66,11 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Servi
 builder.Services.AddScoped<RubberIntelligence.API.Modules.PriceForecasting.Services.IPriceForecastingService, RubberIntelligence.API.Modules.PriceForecasting.Services.OnnxPriceForecastingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGradingService, RubberIntelligence.API.Modules.Grading.Services.OnnxGradingService>();
 
+// Register DPP Services
+builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>();
+
 // Register Infrastructure Services
 builder.Services.AddScoped<JwtTokenService>();
 
