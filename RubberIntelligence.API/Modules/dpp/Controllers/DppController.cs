@@ -129,6 +129,17 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             });
         }
 
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpGet("my-uploads")]
+        public async Task<IActionResult> GetMyDocuments()
+        {
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+            var docs = await _dppRepository.GetByBuyerIdAsync(userId);
+            return Ok(docs);
+        }
+
         [Authorize(Roles = "Exporter,Admin")]
         [HttpGet("{id}/access")]
         public async Task<IActionResult> GetDocumentAccess(string id)
