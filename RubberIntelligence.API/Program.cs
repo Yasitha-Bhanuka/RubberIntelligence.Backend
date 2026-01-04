@@ -54,6 +54,8 @@ builder.Services.Configure<MongoDbSettings>(options =>
 // Register Data Services
 builder.Services.AddSingleton<AppDbContext>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IDppRepository, DppRepository>();
+builder.Services.AddScoped<IMarketplaceRepository, MarketplaceRepository>();
 builder.Services.AddTransient<DbSeeder>();
 
 // Register Module Services
