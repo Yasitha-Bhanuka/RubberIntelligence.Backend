@@ -43,17 +43,31 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             }
 
             // 2. Perform OCR (Gemini)
-            // Re-open stream for OCR
             string extractedText;
-            using (var fileStream = new FileStream(tempPath, FileMode.Open, FileAccess.Read))
+            try 
             {
-                extractedText = await _ocrService.ExtractTextAsync(fileStream, request.File.ContentType);
+                using (var fileStream = new FileStream(tempPath, FileMode.Open, FileAccess.Read))
+                {
+                    extractedText = await _ocrService.ExtractTextAsync(fileStream, request.File.ContentType);
+                }
+            }
+            catch (HttpRequestException ex)
+            {
+                // Check if it's a quota issue (Too Many Requests) or other 4xx/5xx
+                if (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                     return StatusCode(429, new { error = "Gemini API Quota Exceeded. Please try again later.", details = ex.Message });
+                }
+                
+                return StatusCode((int)(ex.StatusCode ?? System.Net.HttpStatusCode.InternalServerError), new { error = "OCR Service Failed", details = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                 return StatusCode(500, new { error = "Internal Server Error during processing", details = ex.Message });
             }
 
             if (string.IsNullOrWhiteSpace(extractedText))
             {
-                // Fallback or Error
-                // For demo, we might convert "No text found" to a result
                 extractedText = "No readable text found.";
             }
 

@@ -58,8 +58,8 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var error = await response.Content.ReadAsStringAsync();
-                    _logger.LogError($"Gemini API Error: {error}");
-                    return "";
+                    _logger.LogError($"Gemini API Error: {response.StatusCode} - {error}");
+                    throw new HttpRequestException($"Gemini API Error: {error}", null, response.StatusCode);
                 }
 
                 var responseJson = await response.Content.ReadAsStringAsync();
@@ -69,10 +69,10 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 
                 return extractedText;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not HttpRequestException)
             {
                 _logger.LogError(ex, "Error extracting text with Gemini");
-                return "";
+                throw; 
             }
         }
 
