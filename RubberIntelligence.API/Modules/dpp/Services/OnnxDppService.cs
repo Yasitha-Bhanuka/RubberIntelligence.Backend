@@ -1,6 +1,10 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using RubberIntelligence.API.Modules.Dpp.DTOs;
+using RubberIntelligence.API.Data.Repositories;
+using RubberIntelligence.API.Domain.Entities;
+using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace RubberIntelligence.API.Modules.Dpp.Services
@@ -9,45 +13,26 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
     {
         private readonly string _modelPath;
         private readonly ILogger<OnnxDppService> _logger;
+        private readonly IUserRepository _userRepository;
         private InferenceSession? _session;
         
-        // Mocked or Simplified pipeline dependencies (since we don't have the TfidfVectorizer object from Python)
-        // In a real production scenario, we'd need to replicate the exact TF-IDF logic or use a Python microservice.
-        // For this task, we will load the ONNX model if available, but since we can't easily reproduce the TF-IDF vectorizer 
-        // in C# without the exact vocabulary artifact from pickle, we will use a Hybrid approach:
-        // 1. If ONNX works (and we can match input), use it.
-        // 2. Fallback to a sophisticated Keyword-based heuristic which effectively replicates the Logistic Regression weights logic
-        //    described in the notebook ("financial terms = confidential", "quality terms = non-confidential").
-
-        public OnnxDppService(IWebHostEnvironment env, ILogger<OnnxDppService> logger)
+        // Mocked or Simplified pipeline dependencies
+        // Ideally handled via properly exported ONNX pipeline or Python microservice.
+        
+        public OnnxDppService(IWebHostEnvironment env, ILogger<OnnxDppService> logger, IUserRepository userRepository)
         {
             _logger = logger;
+            _userRepository = userRepository;
             _modelPath = Path.Combine(env.ContentRootPath, "Modules", "Dpp", "Models", "dpp_classifier_model.onnx");
-
-            // We expect the user to place the model here eventually. 
-            // For now, we initialize safe defaults.
         }
 
         public ClassificationResultDto ClassifyDocument(string extractedText, string fileName)
         {
-            // 1. Preprocess Text
             var processedText = PreprocessText(extractedText);
-
-            // 2. Predict (Hybrid Logic)
-            // Ideally we would use _session.Run() here. 
-            // However, TF-IDF vectorization in C# requires the exact vocabulary list (vocabulary_) and idf_ weights from the sklearn model.
-            // Since we only have the ONNX file (or will have it), we assume we might lack the vocabulary artifact to build the input tensor properly 
-            // unless the ONNX model includes the Tokenizer/Vectorizer (extracted via skl2onnx with initial_types).
-            // The notebook showed `initial_types=[('text_input', StringTensorType([None, 1]))]`, which means the proper implementation 
-            // SHOULD handle strings directly if 'onnxruntime-extensions' or appropriate operators are present, 
-            // OR the vectorizer is part of the graph.
             
-            // Let's implement the logic based on the notebook's "Feature Importance" findings as a robust fallback/implementation 
-            // if strict ONNX inference fails or isn't set up with all dependencies.
-            
+            // Hybrid Logic: Fallback to heuristic if ONNX session not ready or for robust validation
             var (isConfidential, confidence, keywords) = AnalyzeContent(processedText);
 
-            // 3. Construct Result
             var result = new ClassificationResultDto
             {
                 FileName = fileName,
@@ -64,11 +49,135 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
             return result;
         }
 
+        // ==========================================
+        // Secure Invoice Processing (Encryption)
+        // ==========================================
+
+        public async Task<(string EncryptedFilePath, string DppClassification, string EncryptionMetadata)> ProcessAndSecureInvoiceAsync(
+            Stream fileStream, string fileName, string extractedText, string exporterId, string secureStoragePath)
+        {
+            // 1. Classify
+            var classificationResult = ClassifyDocument(extractedText, fileName);
+            string classification = classificationResult.Classification;
+
+            // 2. Fetch Exporter to get Public Key
+            if (!Guid.TryParse(exporterId, out Guid exporterGuid))
+            {
+                throw new ArgumentException("Invalid Exporter ID");
+            }
+
+            var exporter = await _userRepository.GetByIdAsync(exporterGuid);
+            if (exporter == null) throw new Exception("Exporter not found");
+
+            // Ensure Exporter has keys
+            if (string.IsNullOrEmpty(exporter.PublicKey) || string.IsNullOrEmpty(exporter.PrivateKey))
+            {
+                var keys = GenerateRsaKeys();
+                exporter.PublicKey = keys.PublicKey;
+                exporter.PrivateKey = keys.PrivateKey;
+                await _userRepository.UpdateAsync(exporter);
+            }
+
+            // 3. Generate Ephemeral AES Key for this file
+            using var aes = Aes.Create();
+            aes.GenerateKey();
+            aes.GenerateIV();
+            var aesKey = aes.Key;
+            var aesIV = aes.IV;
+
+            // 4. Encrypt File Content with AES (Symmetric)
+            string encryptedFileName = $"{Guid.NewGuid()}_{fileName}.enc";
+            string fullEncryptedPath = Path.Combine(secureStoragePath, encryptedFileName);
+
+            Directory.CreateDirectory(secureStoragePath);
+
+            using (var outputFileStream = new FileStream(fullEncryptedPath, FileMode.Create))
+            using (var cryptoStream = new CryptoStream(outputFileStream, aes.CreateEncryptor(), CryptoStreamMode.Write))
+            {
+                // Reset input stream position just in case
+                if (fileStream.CanSeek) fileStream.Position = 0;
+                await fileStream.CopyToAsync(cryptoStream);
+            }
+
+            // 5. Encrypt AES Key with Exporter's RSA Public Key (Asymmetric)
+            var encryptedAesKey = EncryptRsa(aesKey, exporter.PublicKey);
+
+            // 6. Create Metadata
+            var metadataObj = new
+            {
+                IV = Convert.ToBase64String(aesIV),
+                EncryptedKey = Convert.ToBase64String(encryptedAesKey)
+            };
+            string encryptionMetadata = JsonSerializer.Serialize(metadataObj);
+
+            return (fullEncryptedPath, classification, encryptionMetadata);
+        }
+
+        public async Task<byte[]> RetrieveInvoiceAsync(string filePath, string encryptionMetadataJson, string accessorId)
+        {
+            // 1. Fetch User (Accessor) to get Private Key
+            if (!Guid.TryParse(accessorId, out Guid accessorGuid)) throw new ArgumentException("Invalid User ID");
+            
+            var accessor = await _userRepository.GetByIdAsync(accessorGuid);
+            if (accessor == null) throw new Exception("User not found");
+            
+            if (string.IsNullOrEmpty(accessor.PrivateKey)) throw new Exception("User has no decryption keys established.");
+
+            // 2. Parse Metadata
+            var metadata = JsonSerializer.Deserialize<EncryptionMetadataDto>(encryptionMetadataJson);
+            if (metadata == null) throw new Exception("Invalid encryption metadata");
+
+            byte[] iv = Convert.FromBase64String(metadata.IV);
+            byte[] encryptedKey = Convert.FromBase64String(metadata.EncryptedKey);
+
+            // 3. Decrypt AES Key using Private Key
+            byte[] aesKey = DecryptRsa(encryptedKey, accessor.PrivateKey);
+
+            // 4. Decrypt File
+            if (!File.Exists(filePath)) throw new FileNotFoundException("Encrypted invoice file missing");
+
+            using var aes = Aes.Create();
+            aes.Key = aesKey;
+            aes.IV = iv;
+
+            using var memoryStream = new MemoryStream();
+            using (var fileStream = new FileStream(filePath, FileMode.Open))
+            using (var cryptoStream = new CryptoStream(fileStream, aes.CreateDecryptor(), CryptoStreamMode.Read))
+            {
+                await cryptoStream.CopyToAsync(memoryStream);
+            }
+
+            return memoryStream.ToArray();
+        }
+
+        // ==========================================
+        // Helpers
+        // ==========================================
+
+        private (string PublicKey, string PrivateKey) GenerateRsaKeys()
+        {
+            using var rsa = RSA.Create(2048);
+            return (rsa.ToXmlString(false), rsa.ToXmlString(true));
+        }
+
+        private byte[] EncryptRsa(byte[] data, string publicKeyXml)
+        {
+            using var rsa = RSA.Create();
+            rsa.FromXmlString(publicKeyXml);
+            return rsa.Encrypt(data, RSAEncryptionPadding.OaepSHA256);
+        }
+
+        private byte[] DecryptRsa(byte[] data, string privateKeyXml)
+        {
+            using var rsa = RSA.Create();
+            rsa.FromXmlString(privateKeyXml); // Contains private key
+            return rsa.Decrypt(data, RSAEncryptionPadding.OaepSHA256);
+        }
+
         private string PreprocessText(string text)
         {
             if (string.IsNullOrEmpty(text)) return "";
             text = text.ToLowerInvariant();
-            // Simple normalization to match notebook
             text = text.Replace("lkr", " currency_lkr ").Replace("usd", " currency_usd ");
             text = Regex.Replace(text, @"[^a-z0-9\s\.\,\%]", " ");
             text = text.Replace("currency_lkr", "lkr").Replace("currency_usd", "usd");
@@ -77,7 +186,6 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
 
         private (bool IsConfidential, double Confidence, List<string> Keywords) AnalyzeContent(string text)
         {
-            // Based on the notebook's Feature Importance Analysis:
             var confidentialTerms = new Dictionary<string, double>
             {
                 { "price", 1.5 }, { "amount", 1.2 }, { "invoice", 1.8 }, { "payment", 1.4 },
@@ -91,14 +199,13 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 { "grade", 1.2 }, { "quality", 1.5 }, { "moisture", 1.0 }, { "ash", 1.0 },
                 { "certificate", 1.8 }, { "report", 0.5 }, { "test", 0.8 }, { "inspection", 1.0 },
                 { "warehouse", 0.9 }, { "batch", 0.7 }, { "weight", 0.5 }, { "sample", 0.6 },
-                { "traceability", 1.2 }, { "organic", 1.0 }, { "export", 0.5 } // Export could be mixed, keeping low
+                { "traceability", 1.2 }, { "organic", 1.0 }, { "export", 0.5 }
             };
 
             double confScore = 0;
             double nonConfScore = 0;
             var foundKeywords = new List<string>();
 
-            // Calculate scores
             foreach (var term in confidentialTerms)
             {
                 if (text.Contains(term.Key))
@@ -117,37 +224,29 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 }
             }
 
-            // Decision Logic (Sigmoid-like heuristic)
             double totalScore = confScore - nonConfScore;
-            
-            // Base logic
             bool isConfidential = totalScore > 0;
-            
-            // If explicit "confidential" is present, force true
             if (text.Contains("confidential")) isConfidential = true;
 
-            // Calculate confidence
-            double maxPossible = Math.Max(confScore + nonConfScore, 1.0); // Simple normalization
-            double confidence = 0.5 + (Math.Abs(totalScore) / (maxPossible + 5)) * 0.5; // Scale 0.5 to 1.0
-            confidence = Math.Min(Math.Max(confidence, 0.6), 0.99); // Clamp
+            double maxPossible = Math.Max(confScore + nonConfScore, 1.0);
+            double confidence = 0.5 + (Math.Abs(totalScore) / (maxPossible + 5)) * 0.5;
+            confidence = Math.Min(Math.Max(confidence, 0.6), 0.99);
 
-            // Sort keywords by relevance (simplified)
-            // In a real app we'd map back to specific impact
-            
             return (isConfidential, confidence, foundKeywords.Take(5).ToList());
         }
 
         private string GenerateExplanation(bool isConfidential, List<string> keywords)
         {
             var kwStr = string.Join(", ", keywords);
-            if (isConfidential)
-            {
-                return $"Financial or sensitive information detected. Key indicators found: {kwStr}.";
-            }
-            else
-            {
-                return $"Document appears to be a standard operational record (Quality/Logistics). Indicators: {kwStr}.";
-            }
+            return isConfidential 
+                ? $"Financial or sensitive information detected. Key indicators found: {kwStr}." 
+                : $"Document appears to be a standard operational record (Quality/Logistics). Indicators: {kwStr}.";
+        }
+
+        private class EncryptionMetadataDto
+        {
+            public string IV { get; set; } = "";
+            public string EncryptedKey { get; set; } = "";
         }
     }
 }

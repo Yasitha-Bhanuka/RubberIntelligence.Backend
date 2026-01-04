@@ -18,13 +18,26 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         public string BuyerId { get; set; } = string.Empty;
 
         [BsonElement("status")]
-        public string Status { get; set; } = "Completed"; // Completed (Direct Buy)
+        public string Status { get; set; } = "PendingInvoice"; // Default start state for Buy Now
 
         [BsonElement("offerPrice")]
         public decimal OfferPrice { get; set; }
 
         [BsonElement("lastUpdatedAt")]
         public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
+
+        // DPP & Invoice Data
+        [BsonElement("dppInvoicePath")]
+        public string? DppInvoicePath { get; set; }
+
+        [BsonElement("dppClassification")]
+        public string? DppClassification { get; set; }
+
+        [BsonElement("encryptionMetadata")]
+        public string? EncryptionMetadata { get; set; } // JSON: { "IV": "...", "EncryptedKey": "..." }
+
+        [BsonElement("dppDocumentId")]
+        public string? DppDocumentId { get; set; }
     }
 
     public class TransactionMessage

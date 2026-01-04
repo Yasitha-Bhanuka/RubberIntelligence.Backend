@@ -22,5 +22,12 @@ namespace RubberIntelligence.API.Domain.Entities
         [BsonRepresentation(BsonType.String)]
         [BsonElement("role")]
         public UserRole Role { get; set; }
+
+        // Security Keys for DPP Encryption
+        [BsonElement("publicKey")]
+        public string? PublicKey { get; set; }
+
+        [BsonElement("privateKey")]
+        public string? PrivateKey { get; set; }
     }
 }

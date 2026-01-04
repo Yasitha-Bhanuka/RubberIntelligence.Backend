@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Modules.Marketplace.Models;
+using RubberIntelligence.API.Modules.Dpp.Services;
 using System.Security.Claims;
 
 namespace RubberIntelligence.API.Modules.Marketplace.Controllers
@@ -12,11 +13,22 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
     {
         private readonly IMarketplaceRepository _marketplaceRepository;
         private readonly IUserRepository _userRepository;
+        private readonly OnnxDppService _onnxDppService;
+        private readonly GeminiOcrService _geminiOcrService;
+        private readonly IWebHostEnvironment _env;
 
-        public MarketplaceController(IMarketplaceRepository marketplaceRepository, IUserRepository userRepository)
+        public MarketplaceController(
+            IMarketplaceRepository marketplaceRepository, 
+            IUserRepository userRepository,
+            OnnxDppService onnxDppService,
+            GeminiOcrService geminiOcrService,
+            IWebHostEnvironment env)
         {
             _marketplaceRepository = marketplaceRepository;
             _userRepository = userRepository;
+            _onnxDppService = onnxDppService;
+            _geminiOcrService = geminiOcrService;
+            _env = env;
         }
 
         // ==========================================
@@ -100,7 +112,7 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 ExporterId = exporterId,
                 ExporterName = exporterName,
                 BuyerId = post.BuyerId,
-                Status = "Completed",
+                Status = "PendingInvoice", // Changed from Completed
                 OfferPrice = (decimal)post.PricePerKg, // Direct buy at listed price
                 LastUpdatedAt = DateTime.UtcNow
             };
@@ -121,6 +133,117 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             var transactions = await _marketplaceRepository.GetTransactionsByUserIdAsync(userId);
             return Ok(transactions);
+        }
+
+        // ==========================================
+        // Invoice Management (DPP)
+        // ==========================================
+
+        [Authorize(Roles = "Buyer")]
+        [HttpPost("transactions/{id}/dpp")]
+        public async Task<IActionResult> LinkDppDocument(string id, [FromBody] Dictionary<string, string> request)
+        {
+            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            
+            if (!request.ContainsKey("dppId")) return BadRequest("dppId is required");
+            string dppId = request["dppId"];
+
+            // 1. Validate Transaction
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null) return NotFound("Transaction not found");
+            if (transaction.BuyerId != buyerId) return StatusCode(403, "You are not the seller/buyer for this transaction");
+
+            // 2. Update Transaction
+            transaction.DppDocumentId = dppId;
+            transaction.LastUpdatedAt = DateTime.UtcNow;
+
+            await _marketplaceRepository.UpdateTransactionAsync(transaction);
+
+            return Ok(new { Message = "DPP Document linked successfully" });
+        }
+
+        [Authorize(Roles = "Buyer")]
+        [HttpPost("transactions/{id}/invoice")]
+        public async Task<IActionResult> UploadInvoice(string id, IFormFile file)
+        {
+            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            
+            // 1. Validate Transaction
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null) return NotFound("Transaction not found");
+            if (transaction.BuyerId != buyerId) return StatusCode(403, "You are not the seller/buyer for this transaction");
+            
+            // 2. Validate Status
+            // Allow re-upload if needed, or strictly PendingInvoice
+            // if (transaction.Status != "PendingInvoice") return BadRequest("Invoice not required or already processed");
+
+            if (file == null || file.Length == 0) return BadRequest("No file uploaded");
+
+            // 3. Extract Text (OCR)
+            using var stream = file.OpenReadStream();
+            string extractedText = "";
+            try {
+                extractedText = await _geminiOcrService.ExtractTextAsync(stream, file.ContentType);
+            } catch (Exception ex) {
+                // Determine fallback or failure. For now, log and proceed with empty text if allowed, or fail.
+                // Depending on requirements. Let's fail if OCR is critical for classification.
+                return StatusCode(500, "OCR Processing Failed: " + ex.Message);
+            }
+
+            // 4. Process & Encrypt
+            string storagePath = Path.Combine(_env.ContentRootPath, "App_Data", "SecureInvoices");
+            // Reset stream for encryption reading
+            using var fileStreamForEncryption = file.OpenReadStream();
+            
+            var (encryptedPath, classification, encryptionMetadata) = await _onnxDppService.ProcessAndSecureInvoiceAsync(
+                fileStreamForEncryption, file.FileName, extractedText, transaction.ExporterId, storagePath);
+
+            // 5. Update Transaction
+            transaction.DppInvoicePath = encryptedPath;
+            transaction.DppClassification = classification;
+            transaction.EncryptionMetadata = encryptionMetadata;
+            transaction.Status = "InvoiceUploaded"; // Transition state
+            transaction.LastUpdatedAt = DateTime.UtcNow;
+
+            await _marketplaceRepository.UpdateTransactionAsync(transaction);
+
+            return Ok(new { Message = "Invoice uploaded and secured successfully", Classification = classification });
+        }
+
+        [Authorize(Roles = "Exporter")]
+        [HttpGet("transactions/{id}/invoice")]
+        public async Task<IActionResult> GetInvoice(string id)
+        {
+            var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+            // 1. Validate
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null) return NotFound("Transaction not found");
+            if (transaction.ExporterId != exporterId) return StatusCode(403, "Access Denied: Only the purchasing Exporter can view this invoice.");
+
+            if (string.IsNullOrEmpty(transaction.DppInvoicePath) || string.IsNullOrEmpty(transaction.EncryptionMetadata))
+                return NotFound("No invoice available");
+
+            try
+            {
+                // 2. Retrieve & Decrypt
+                byte[] fileBytes = await _onnxDppService.RetrieveInvoiceAsync(
+                    transaction.DppInvoicePath, transaction.EncryptionMetadata, exporterId);
+
+                // Determine content type (default to octet-stream or try to preserve original extension logic if stored)
+                // For simplified Prototype: application/octet-stream or assume original type if we stored it. 
+                // We didn't store original ContentType in DB. Let's infer from file name or default to PDF/Image.
+                string contentType = "application/octet-stream";
+                if (transaction.DppInvoicePath.EndsWith(".pdf.enc")) contentType = "application/pdf";
+                else if (transaction.DppInvoicePath.EndsWith(".jpg.enc")) contentType = "image/jpeg";
+                else if (transaction.DppInvoicePath.EndsWith(".png.enc")) contentType = "image/png";
+
+                return File(fileBytes, contentType, Path.GetFileNameWithoutExtension(transaction.DppInvoicePath)); // Remove .enc
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, "Decryption Failed: " + ex.Message);
+            }
         }
     }
 }
