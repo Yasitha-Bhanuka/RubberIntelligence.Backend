@@ -13,7 +13,8 @@ namespace RubberIntelligence.API.Data.Repositories
         // Transactions
         Task CreateTransactionAsync(MarketplaceTransaction transaction);
         Task<MarketplaceTransaction?> GetTransactionByIdAsync(string id);
-        Task<List<MarketplaceTransaction>> GetTransactionsForUserAsync(string userId); // Combined for Buyer/Exporter
+        Task<List<MarketplaceTransaction>> GetTransactionsByUserIdAsync(string userId); // Combined for Buyer/Exporter
         Task UpdateTransactionAsync(MarketplaceTransaction transaction);
+        Task UpdatePostAsync(SellingPost post);
     }
 }

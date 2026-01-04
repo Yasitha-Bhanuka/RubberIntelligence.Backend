@@ -50,7 +50,7 @@ namespace RubberIntelligence.API.Data.Repositories
             return await _transactions.Find(x => x.Id == id).FirstOrDefaultAsync();
         }
 
-        public async Task<List<MarketplaceTransaction>> GetTransactionsForUserAsync(string userId)
+        public async Task<List<MarketplaceTransaction>> GetTransactionsByUserIdAsync(string userId)
         {
             // Find where user is Buyer OR Exporter
             var filter = Builders<MarketplaceTransaction>.Filter.Or(
@@ -63,6 +63,11 @@ namespace RubberIntelligence.API.Data.Repositories
         public async Task UpdateTransactionAsync(MarketplaceTransaction transaction)
         {
             await _transactions.ReplaceOneAsync(x => x.Id == transaction.Id, transaction);
+        }
+
+        public async Task UpdatePostAsync(SellingPost post)
+        {
+            await _posts.ReplaceOneAsync(x => x.Id == post.Id, post);
         }
     }
 }
