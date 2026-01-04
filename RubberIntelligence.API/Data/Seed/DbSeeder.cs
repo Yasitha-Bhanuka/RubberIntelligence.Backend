@@ -40,6 +40,32 @@ namespace RubberIntelligence.API.Data.Seed
                     Role = UserRole.Admin
                 });
             }
+
+            // Seed Buyer
+            if (!await _userRepository.ExistsAsync("buyer@test.com"))
+            {
+                await _userRepository.CreateUserAsync(new User
+                {
+                    Id = Guid.NewGuid(),
+                    FullName = "Global Buyer Inc",
+                    Email = "buyer@test.com",
+                    PasswordHash = "pass123",
+                    Role = UserRole.Buyer
+                });
+            }
+
+            // Seed Exporter
+            if (!await _userRepository.ExistsAsync("exporter@test.com"))
+            {
+                await _userRepository.CreateUserAsync(new User
+                {
+                    Id = Guid.NewGuid(),
+                    FullName = "Ceylon Exporters Ltd",
+                    Email = "exporter@test.com",
+                    PasswordHash = "pass123",
+                    Role = UserRole.Exporter
+                });
+            }
         }
     }
 }

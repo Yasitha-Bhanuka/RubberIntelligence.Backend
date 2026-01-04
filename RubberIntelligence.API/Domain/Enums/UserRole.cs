@@ -4,6 +4,8 @@ namespace RubberIntelligence.API.Domain.Enums
     {
         Farmer,
         Admin,
-        Researcher
+        Researcher,
+        Buyer,
+        Exporter
     }
 }
