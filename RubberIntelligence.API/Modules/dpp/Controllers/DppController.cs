@@ -171,5 +171,16 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 return File(stream, doc.ContentType, doc.OriginalFileName);
             }
         }
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetDocumentMetadata(string id)
+        {
+            var doc = await _dppRepository.GetByIdAsync(id);
+            if (doc == null) return NotFound("Document not found");
+            
+            // Return metadata only (no file stream)
+            return Ok(doc);
+        }
+
     }
 }
