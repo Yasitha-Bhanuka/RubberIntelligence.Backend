@@ -80,42 +80,37 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         // Transactions
         // ==========================================
 
-        [Authorize(Roles = "Exporter,Admin")]
-        [HttpPost("posts/{postId}/request")]
-        public async Task<IActionResult> RequestPurchase(string postId, [FromBody] MarketplaceTransaction request)
+        [Authorize(Roles = "Exporter")]
+        [HttpPost("posts/{id}/buy")]
+        public async Task<IActionResult> BuyItem(string id)
         {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+            var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var exporterName = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "Unknown Exporter";
 
-            var post = await _marketplaceRepository.GetPostByIdAsync(postId);
+            // 1. Get Post
+            var post = await _marketplaceRepository.GetPostByIdAsync(id);
             if (post == null) return NotFound("Post not found");
+            if (post.Status != "Active") return BadRequest("Item already sold or unavailable");
+            if (post.BuyerId == exporterId) return BadRequest("Cannot buy your own item");
 
-            // Check if transaction already exists? (Optional logic)
-
+            // 2. Create Transaction (Completed)
             var transaction = new MarketplaceTransaction
             {
-                PostId = postId,
-                ExporterId = userId,
-                ExporterName = "Rubber Exporter", // TODO Cache name
+                PostId = post.Id,
+                ExporterId = exporterId,
+                ExporterName = exporterName,
                 BuyerId = post.BuyerId,
-                Status = "Pending",
-                OfferPrice = request.OfferPrice > 0 ? request.OfferPrice : post.PricePerKg,
-                Messages = new List<TransactionMessage>(),
+                Status = "Completed",
+                OfferPrice = (decimal)post.PricePerKg, // Direct buy at listed price
                 LastUpdatedAt = DateTime.UtcNow
             };
-            
-            if (!string.IsNullOrEmpty(request.Messages?.FirstOrDefault()?.Text))
-            {
-                transaction.Messages.Add(new TransactionMessage 
-                { 
-                    SenderId = userId, 
-                    SenderName = "Exporter", 
-                    Text = request.Messages.First().Text,
-                    Timestamp = DateTime.UtcNow 
-                });
-            }
-
             await _marketplaceRepository.CreateTransactionAsync(transaction);
+
+            // 3. Mark Post as Sold
+            post.Status = "Sold";
+            post.SoldToExporterId = exporterId;
+            await _marketplaceRepository.UpdatePostAsync(post);
+
             return Ok(transaction);
         }
 
@@ -123,42 +118,9 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         [HttpGet("transactions")]
         public async Task<IActionResult> GetMyTransactions()
         {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId)) return Unauthorized();
-
-            var transactions = await _marketplaceRepository.GetTransactionsForUserAsync(userId);
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var transactions = await _marketplaceRepository.GetTransactionsByUserIdAsync(userId);
             return Ok(transactions);
-        }
-
-        [Authorize]
-        [HttpPut("transactions/{id}")]
-        public async Task<IActionResult> UpdateTransaction(string id, [FromBody] MarketplaceTransaction update)
-        {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
-
-            if (transaction == null) return NotFound();
-            
-            // Verify ownership
-            if (transaction.BuyerId != userId && transaction.ExporterId != userId) 
-                return Forbid();
-
-            // Logic to update status or add message
-            if (!string.IsNullOrEmpty(update.Status)) 
-                transaction.Status = update.Status;
-            
-            if (update.Messages != null && update.Messages.Any())
-            {
-                var newMsg = update.Messages.Last();
-                newMsg.SenderId = userId; // Ensure sender is correct
-                newMsg.Timestamp = DateTime.UtcNow;
-                transaction.Messages.Add(newMsg);
-            }
-            
-            transaction.LastUpdatedAt = DateTime.UtcNow;
-            await _marketplaceRepository.UpdateTransactionAsync(transaction);
-
-            return Ok(transaction);
         }
     }
 }

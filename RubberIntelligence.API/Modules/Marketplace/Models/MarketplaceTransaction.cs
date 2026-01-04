@@ -17,13 +17,13 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         public string ExporterName { get; set; } = string.Empty;
         public string BuyerId { get; set; } = string.Empty;
 
-        // Status
-        public string Status { get; set; } = "Pending"; // Pending, Negotiating, Accepted, Rejected, Completed
+        [BsonElement("status")]
+        public string Status { get; set; } = "Completed"; // Completed (Direct Buy)
 
-        // Offer Details
-        public double OfferPrice { get; set; }
-        public List<TransactionMessage> Messages { get; set; } = new();
+        [BsonElement("offerPrice")]
+        public decimal OfferPrice { get; set; }
 
+        [BsonElement("lastUpdatedAt")]
         public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
     }
 

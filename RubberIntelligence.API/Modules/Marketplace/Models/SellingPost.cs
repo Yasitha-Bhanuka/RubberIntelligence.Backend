@@ -24,8 +24,13 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         // Link to DPP Proof
         public string? DppDocumentId { get; set; }
 
-        public string Status { get; set; } = "Active"; // Active, Sold, archived
+        [BsonElement("status")]
+        public string Status { get; set; } = "Active"; // Active, Sold, Archived
 
+        [BsonElement("soldToExporterId")]
+        public string? SoldToExporterId { get; set; }
+
+        [BsonElement("createdAt")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }
