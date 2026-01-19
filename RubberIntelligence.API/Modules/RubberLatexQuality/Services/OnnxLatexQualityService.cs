@@ -143,7 +143,7 @@ namespace RubberIntelligence.API.Modules.RubberLatexQuality.Services
                 var (grade, status) = DetermineQualityRules(request.Temperature, request.Turbidity, request.PH);
 
                 // Generate recommendations
-                var recommendations = GenerateRecommendations(request, qualityScore);
+                var recommendations = GenerateRecommendations(request, grade);
 
                 _logger.LogInformation($"[LatexQualityAI] Prediction: {grade} (Rule-Based), Model Score: {qualityScore}, Confidence: {confidence:P2}");
 
@@ -214,7 +214,7 @@ namespace RubberIntelligence.API.Modules.RubberLatexQuality.Services
             return ("Very Bad Quality", "Fail");
         }
 
-        private string[] GenerateRecommendations(LatexQualityRequest request, int qualityScore)
+        private string[] GenerateRecommendations(LatexQualityRequest request, string grade)
         {
             var recommendations = new List<string>();
 
@@ -235,15 +235,16 @@ namespace RubberIntelligence.API.Modules.RubberLatexQuality.Services
                 recommendations.Add("pH is too high. Monitor ammonia levels and adjust accordingly.");
 
             // Overall quality recommendations
-            if (qualityScore >= 70)
+            if (string.Equals(grade, "Excellent Quality", StringComparison.OrdinalIgnoreCase) || 
+                string.Equals(grade, "Good Quality", StringComparison.OrdinalIgnoreCase))
             {
                 recommendations.Add("Good quality latex! Maintain current processing conditions.");
             }
-            else if (qualityScore >= 50)
+            else if (string.Equals(grade, "Average Quality", StringComparison.OrdinalIgnoreCase))
             {
                 recommendations.Add("Average quality latex. Minor adjustments may improve consistency.");
             }
-            else if (qualityScore >= 30)
+            else if (string.Equals(grade, "Poor Quality", StringComparison.OrdinalIgnoreCase))
             {
                 recommendations.Add("Poor quality latex. Immediate corrective action required.");
                 recommendations.Add("Consult with quality control team to identify root causes.");
