@@ -64,6 +64,10 @@ builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.S
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxPestDetectionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>();
+// Register Image Validation Services
+builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.ImageQualityService>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.ContentVerificationService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IImageValidationService, RubberIntelligence.API.Modules.DiseaseDetection.Services.ImageValidationService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IDiseaseDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.CompositeDiseaseService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.PriceForecasting.Services.IPriceForecastingService, RubberIntelligence.API.Modules.PriceForecasting.Services.OnnxPriceForecastingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGradingService, RubberIntelligence.API.Modules.Grading.Services.OnnxGradingService>();
