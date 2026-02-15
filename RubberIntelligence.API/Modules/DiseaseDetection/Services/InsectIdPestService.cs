@@ -123,67 +123,96 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 };
             }
 
-            var topSuggestion = suggestions[0];
-            var pestName = topSuggestion.Name ?? "Unknown Pest";
-            var probability = topSuggestion.Probability ?? 0;
-
-            // Determine severity based on confidence
-            string severity = probability switch
+            // Iterate through suggestions to find a rubber-related pest
+            foreach (var suggestion in suggestions)
             {
-                > 0.8 => "High",
-                > 0.5 => "Medium",
-                _ => "Low"
-            };
+                var originalName = suggestion.Name ?? "";
+                var probability = suggestion.Probability ?? 0;
 
-            // Get pest-specific remedy
-            var remedy = GetPestRemedy(pestName);
+                // Only consider reasonably confident predictions (e.g. > 15%)
+                if (probability < 0.15) continue;
 
-            _logger.LogInformation("[InsectId] Pest identified: {Pest} ({Prob:P1})", pestName, probability);
+                var mappedLabel = MapToRubberPest(originalName);
+                if (mappedLabel != null)
+                {
+                    // Found a rubber-specific pest
+                    _logger.LogInformation("[InsectId] Mapped '{Original}' to '{Mapped}' ({Prob:P1})", originalName, mappedLabel, probability);
+
+                    var severity = probability switch
+                    {
+                        > 0.8 => "High",
+                        > 0.5 => "Medium",
+                        _ => "Low"
+                    };
+
+                    return new PredictionResponse
+                    {
+                        Label = mappedLabel,
+                        Confidence = probability,
+                        Severity = severity,
+                        Remedy = GetPestRemedy(mappedLabel)
+                    };
+                }
+            }
+
+            // If we get here, no rubber-specific pest was found
+            _logger.LogInformation("[InsectId] No rubber-specific pest found. Top suggestion was: {Top}", suggestions[0].Name);
 
             return new PredictionResponse
             {
-                Label = pestName,
-                Confidence = probability,
-                Severity = severity,
-                Remedy = remedy
+                Label = "Non-Rubber Pest Detected",
+                Confidence = 0.0,
+                Severity = "N/A",
+                Remedy = "This insect is not recognized as a common rubber plantation pest. It might be harmless or incidental. Monitor for damage.",
+                IsRejected = false
             };
+        }
+
+        private static string? MapToRubberPest(string apiName)
+        {
+            var lowerName = apiName.ToLowerInvariant();
+
+            // 1. Rubber_Leaf_Skeletonizer (Lepidoptera larvae / Moths)
+            string[] skeletonizerKeywords = { 
+                "skeletonizer", "moth", "larva", "caterpillar", "lepidoptera", "armyworm", "looper", "aettoneura"
+            };
+            if (skeletonizerKeywords.Any(k => lowerName.Contains(k))) return "Rubber_Leaf_Skeletonizer";
+
+            // 2. Rubber_Leafhopper (Cicadellidae)
+            string[] leafhopperKeywords = { "leafhopper", "jassid", "cicadellidae", "empoasca", "idioscopus" };
+            if (leafhopperKeywords.Any(k => lowerName.Contains(k))) return "Rubber_Leafhopper";
+
+            // 3. Red_Spider_Mite (Acari)
+            string[] miteKeywords = { "mite", "spider mite", "tetranychus", "oligonychus", "brevipalpus", "acari", "tarsonemidae" };
+            if (miteKeywords.Any(k => lowerName.Contains(k))) return "Red_Spider_Mite";
+
+            // 4. Thrips (Thysanoptera)
+            string[] thripsKeywords = { "thrip", "thysanoptera", "scirtothrips", "frankliniella", "stenchaetothrips" };
+            if (thripsKeywords.Any(k => lowerName.Contains(k))) return "Thrips";
+
+            // 5. Rubber_Mealybug (Pseudococcidae)
+            string[] mealybugKeywords = { "mealy", "mealybug", "pseudococcidae", "ferrisia", "paracoccus", "planococcus", "nipaecoccus", "coccid" };
+            if (mealybugKeywords.Any(k => lowerName.Contains(k))) return "Rubber_Mealybug";
+
+            // 6. Weevil (Curculionidae)
+            string[] weevilKeywords = { "weevil", "curculionidae", "hypomeces", "tanymecus", "myllocerus", "snout beetle" };
+            if (weevilKeywords.Any(k => lowerName.Contains(k))) return "Weevil (specific species)";
+
+            return null;
         }
 
         private static string GetPestRemedy(string pestName)
         {
-            var lowerName = pestName.ToLowerInvariant();
-
-            if (lowerName.Contains("aphid"))
-                return "Use neem oil or insecticidal soap. Encourage natural predators like ladybugs. Spray with water to dislodge.";
-            if (lowerName.Contains("mite") || lowerName.Contains("spider"))
-                return "Apply miticide or neem oil spray. Increase humidity around plants. Remove heavily infested leaves.";
-            if (lowerName.Contains("whitefly"))
-                return "Use yellow sticky traps. Apply neem oil or insecticidal soap. Introduce natural predators like Encarsia.";
-            if (lowerName.Contains("beetle") || lowerName.Contains("weevil"))
-                return "Pick off visible beetles manually. Apply neem oil or pyrethrin-based insecticides if infestation is severe.";
-            if (lowerName.Contains("caterpillar") || lowerName.Contains("looper") || lowerName.Contains("moth") || lowerName.Contains("larva"))
-                return "Remove manually. Apply Bacillus thuringiensis (Bt) biological insecticide. Check under leaves regularly.";
-            if (lowerName.Contains("slug") || lowerName.Contains("snail"))
-                return "Remove manually. Use diatomaceous earth or organic bait around plants. Water in the morning to reduce moisture.";
-            if (lowerName.Contains("grasshopper") || lowerName.Contains("cricket"))
-                return "Keep area free of debris. Use neem oil sprays. Consider bird perches to attract natural predators.";
-            if (lowerName.Contains("thrip"))
-                return "Use blue sticky traps. Apply spinosad or neem oil. Remove and destroy infested plant material.";
-            if (lowerName.Contains("scale"))
-                return "Scrub off with rubbing alcohol on cotton swab. Apply horticultural oil. For severe infestations, use systemic insecticide.";
-            if (lowerName.Contains("mealy") || lowerName.Contains("mealybug"))
-                return "Dab with rubbing alcohol. Spray with neem oil or insecticidal soap. Isolate affected plants.";
-            if (lowerName.Contains("ant"))
-                return "Use bait stations with borax. Apply diatomaceous earth around base. Manage aphid populations (ants farm aphids).";
-            if (lowerName.Contains("fly") || lowerName.Contains("fruit fly"))
-                return "Use pheromone traps. Destroy fallen infected fruit. Apply certified insecticides if necessary.";
-            if (lowerName.Contains("cockroach"))
-                return "Keep area clean. Use bait stations. Apply insecticides in crevices and hiding spots.";
-            if (lowerName.Contains("termite"))
-                return "This is a serious infestation. Contact a professional pest control service. Apply termiticide around affected areas.";
-
-            // Generic remedy
-            return $"Pest '{pestName}' identified. Apply general insecticide or consult an agriculture extension officer for specific treatment.";
+            return pestName switch
+            {
+                "Rubber_Leaf_Skeletonizer" => "For moth larvae/caterpillars: Remove manually if minor. Apply Bacillus thuringiensis (Bt) or neem oil. Check under leaves for egg masses.",
+                "Rubber_Leafhopper" => "Use yellow sticky traps. Apply neem oil or systemic insecticides if population is high. Maintain weed-free surroundings.",
+                "Red_Spider_Mite" => "Apply wettable sulfur or specific miticides. Increase humidity/mist leaves in dry weather. Predatory mites can be introduced.",
+                "Thrips" => "Use blue sticky traps. Apply spinosad or neem oil. Remove and destroy heavily infested plant parts.",
+                "Rubber_Mealybug" => "Dab with rubbing alcohol or spray with insecticidal soap/neem oil. Encourage ladybugs and parasitic wasps.",
+                "Weevil (specific species)" => "Collect adult weevils by shaking branches onto sheets. Apply soil insecticides for larvae if root damage is suspected.",
+                _ => "Consult a rubber plantation expert for specific pest management."
+            };
         }
 
         // ── Insect.id API Response DTOs ─────────────────────────────────────
