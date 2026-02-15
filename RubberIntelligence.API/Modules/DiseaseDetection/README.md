@@ -4,21 +4,21 @@
 
 The Disease Detection module allows rubber plantation users to identify **three categories of threats** by uploading a photo. The core novelty is the **Composite Strategy Pattern** — a single API endpoint delegates to three completely different AI backends based on the user's selection.
 
-| # | Detection Type | Service | AI Approach |
-|---|---|---|---|
-| 0 | **Leaf Disease** | `OnnxLeafDiseaseService` | On-device ONNX model (FastAI ResNet) — 9 classes |
-| 1 | **Pest** | `OnnxPestDetectionService` | On-device ONNX model — 19 pest classes |
-| 2 | **Weed** | `PlantNetWeedService` | External API ([PlantNet](https://my-api.plantnet.org)) |
+| #   | Detection Type   | Service                 | AI Approach                                                                                     |
+| --- | ---------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
+| 0   | **Leaf Disease** | `PlantIdDiseaseService` | [Plant.id](https://plant.id) Health Assessment API — 548+ conditions                            |
+| 1   | **Pest**         | `InsectIdPestService`   | [Insect.id](https://insect.kindwise.com) Identification API — thousands of invertebrate species |
+| 2   | **Weed**         | `PlantNetWeedService`   | External API ([PlantNet](https://my-api.plantnet.org))                                          |
 
 ## Architecture
 
 ```
 IDiseaseDetectionService (interface)
 ├── CompositeDiseaseService  ← Registered as IDiseaseDetectionService (router)
-│   ├── OnnxLeafDiseaseService   (type == 0)
-│   ├── OnnxPestDetectionService (type == 1)
-│   └── PlantNetWeedService      (type == 2)
-└── MockDiseaseService       ← For testing without models
+│   ├── PlantIdDiseaseService     (type == 0) → Plant.id Health Assessment API
+│   ├── InsectIdPestService       (type == 1) → Insect.id Identification API
+│   └── PlantNetWeedService       (type == 2) → PlantNet external API
+└── MockDiseaseService        ← For testing without API keys
 ```
 
 ## End-to-End Flow
@@ -28,8 +28,8 @@ sequenceDiagram
     participant App as Mobile App
     participant API as DiseaseController
     participant Comp as CompositeDiseaseService
-    participant Leaf as OnnxLeafDiseaseService
-    participant Pest as OnnxPestDetectionService
+    participant Leaf as PlantIdDiseaseService
+    participant Pest as InsectIdPestService
     participant Weed as PlantNetWeedService
     participant DB as MongoDB
 
@@ -38,11 +38,11 @@ sequenceDiagram
 
     alt type == 0 (Leaf Disease)
         Comp->>Leaf: PredictAsync()
-        Leaf->>Leaf: Resize 224×224, normalize, ONNX inference, softmax
+        Leaf->>Leaf: Convert to base64, call Plant.id health_assessment API
         Leaf-->>Comp: PredictionResponse
     else type == 1 (Pest)
         Comp->>Pest: PredictAsync()
-        Pest->>Pest: Same pipeline, different ONNX model
+        Pest->>Pest: Convert to base64, call Insect.id identification API
         Pest-->>Comp: PredictionResponse
     else type == 2 (Weed)
         Comp->>Weed: PredictAsync()
@@ -59,10 +59,10 @@ sequenceDiagram
 
 Both endpoints require `[Authorize]` (JWT Bearer token).
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `POST /api/disease/detect` | Detect | Accepts `multipart/form-data` with `Image` (file) + `Type` (enum 0/1/2). Returns prediction result. |
-| `GET /api/disease/history` | GetHistory | Returns the last 20 detection records for the authenticated user. |
+| Endpoint                   | Method     | Description                                                                                         |
+| -------------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `POST /api/disease/detect` | Detect     | Accepts `multipart/form-data` with `Image` (file) + `Type` (enum 0/1/2). Returns prediction result. |
+| `GET /api/disease/history` | GetHistory | Returns the last 20 detection records for the authenticated user.                                   |
 
 ### Request — `POST /api/disease/detect`
 
@@ -89,43 +89,45 @@ Type: 0  (0=LeafDisease, 1=Pest, 2=Weed)
 ```
 DiseaseDetection/
 ├── Controllers/
-│   └── DiseaseController.cs        # API endpoints (detect + history)
+│   └── DiseaseController.cs            # API endpoints (detect + history)
 ├── DTOs/
-│   └── PredictionDtos.cs           # PredictionRequest & PredictionResponse
+│   ├── PredictionDtos.cs               # PredictionRequest & PredictionResponse
+│   └── ValidationDtos.cs               # Image quality & content validation DTOs
 ├── Enums/
-│   └── DiseaseType.cs              # LeafDisease=0, Pest=1, Weed=2
+│   └── DiseaseType.cs                  # LeafDisease=0, Pest=1, Weed=2
 ├── Models/
-│   ├── rubber_leaf_disease_model.onnx   # FastAI leaf disease model
-│   └── pests_model.onnx                # FastAI pest detection model
+│   └── mobilenetv2.onnx                # MobileNetV2 for image content verification
 ├── Services/
-│   ├── IDiseaseDetectionService.cs  # Interface
-│   ├── CompositeDiseaseService.cs   # Strategy router
-│   ├── OnnxLeafDiseaseService.cs    # Leaf disease ONNX inference (9 classes)
-│   ├── OnnxPestDetectionService.cs  # Pest detection ONNX inference (19 classes)
-│   ├── PlantNetWeedService.cs       # PlantNet external API integration
-│   └── MockDiseaseService.cs        # Mock for testing
+│   ├── IDiseaseDetectionService.cs     # Interface
+│   ├── CompositeDiseaseService.cs      # Strategy router
+│   ├── PlantIdDiseaseService.cs        # Plant.id API — leaf disease detection (548+ conditions)
+│   ├── InsectIdPestService.cs          # Insect.id API — pest identification
+│   ├── PlantNetWeedService.cs          # PlantNet API — weed/plant identification
+│   ├── ImageValidationService.cs       # Orchestrates quality + content checks
+│   ├── ImageQualityService.cs          # Blur detection + resolution check
+│   ├── ContentVerificationService.cs   # MobileNetV2 content pre-screening
+│   ├── IImageValidationService.cs      # Validation interface
+│   ├── MockDiseaseService.cs           # Mock for testing without APIs
+│   ├── OnnxLeafDiseaseService.cs       # (Legacy) Custom ONNX model — kept as reference
+│   └── OnnxPestDetectionService.cs     # (Legacy) Custom ONNX model — kept as reference
 └── README.md
 ```
 
-## ONNX Inference Pipeline
+## Plant.id Leaf Disease Service
 
-Both `OnnxLeafDiseaseService` and `OnnxPestDetectionService` share the same pipeline:
+- Calls `POST https://plant.id/api/v3/health_assessment` with base64-encoded image
+- Requires `PLANTID_API_KEY` environment variable
+- Returns health assessment with disease name, probability, and severity
+- Covers 548+ plant health conditions including diseases, pests, and abiotic issues
+- Falls back to a mock response if the API key is missing
 
-1. **Load model** at startup from `Models/*.onnx` via `Microsoft.ML.OnnxRuntime`
-2. **Preprocess** — Resize to 224×224 using SixLabors.ImageSharp
-3. **Normalize** — ImageNet mean `[0.485, 0.456, 0.406]` and std `[0.229, 0.224, 0.225]`
-4. **Create tensor** — NCHW format `[1, 3, 224, 224]`
-5. **Run inference** — `InferenceSession.Run()`
-6. **Post-process** — Softmax on raw logits → argmax → label lookup
-7. **Severity** — Confidence > 80% → "High", else "Medium"
+## Insect.id Pest Service
 
-### Leaf Disease Classes (9)
-
-Anthracnose, Birds_eye, Colletorichum, Corynespora, Dry_Leaf, Healthy, Leaf_Spot, Pesta, Powdery_mildew
-
-### Pest Classes (19)
-
-Adristyrannus, Aphids, Beetle, Bugs, Cabbage Looper, Cicadellidae, Cutworm, Earwig, FieldCricket, Grasshopper, Mediterranean fruit fly, Mites, RedSpider, Riptortus, Slug, Snail, Thrips, Weevil, Whitefly
+- Calls `POST https://insect.kindwise.com/api/v1/identification` with base64-encoded image
+- Requires `INSECTID_API_KEY` environment variable
+- Returns pest identification with species name, probability, and remedy
+- Covers thousands of invertebrate species (insects, spiders, arthropods)
+- Falls back to a mock response if the API key is missing
 
 ## PlantNet Weed Service
 
@@ -133,6 +135,21 @@ Adristyrannus, Aphids, Beetle, Bugs, Cabbage Looper, Cicadellidae, Cutworm, Earw
 - Requires `PLANTNET_API_KEY` environment variable (or `PlantNet:ApiKey` in config)
 - Returns top match with scientific + common name and confidence score
 - Falls back to a mock response if the API key is missing
+
+## Image Validation Pipeline
+
+Before any image is sent to the AI services, it passes through:
+
+1. **Quality Check** (`ImageQualityService`) — resolution ≥ 224×224, blur score ≥ threshold
+2. **Content Verification** (`ContentVerificationService`) — MobileNetV2 pre-screening ensures image contains expected content type (leaf/pest/weed)
+
+## Environment Variables
+
+| Variable           | Required For          | Description                                                     |
+| ------------------ | --------------------- | --------------------------------------------------------------- |
+| `PLANTID_API_KEY`  | Leaf Disease (type=0) | API key from [admin.kindwise.com](https://admin.kindwise.com)   |
+| `INSECTID_API_KEY` | Pest (type=1)         | API key from [admin.kindwise.com](https://admin.kindwise.com)   |
+| `PLANTNET_API_KEY` | Weed (type=2)         | API key from [my-api.plantnet.org](https://my-api.plantnet.org) |
 
 ## Data Persistence
 
