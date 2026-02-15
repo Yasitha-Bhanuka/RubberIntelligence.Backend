@@ -15,6 +15,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.DTOs
         public double Confidence { get; set; }
         public required string Remedy { get; set; }
         public required string Severity { get; set; }
-        // For future: maybe bounding boxes, etc.
+        public bool IsRejected { get; set; } = false;
+        public string? RejectionReason { get; set; }
     }
 }
