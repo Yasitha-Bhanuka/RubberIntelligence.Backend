@@ -14,6 +14,8 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
         private readonly GeminiOcrService _ocrService;
         private readonly OnnxDppService _onnxDppService;
         private readonly DppEncryptionService _encryptionService;
+        private readonly FieldEncryptionService _fieldEncryptionService;
+        private readonly FieldConfidentialityService _fieldConfidentialityService;
         private readonly IDppRepository _dppRepository;
         private readonly IUserRepository _userRepository; // To validate user existance if needed, mostly reliance on Claims
         private readonly IWebHostEnvironment _env;
@@ -22,6 +24,8 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             GeminiOcrService ocrService, 
             OnnxDppService onnxDppService, 
             DppEncryptionService encryptionService,
+            FieldEncryptionService fieldEncryptionService,
+            FieldConfidentialityService fieldConfidentialityService,
             IDppRepository dppRepository,
             IUserRepository userRepository,
             IWebHostEnvironment env)
@@ -29,6 +33,8 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             _ocrService = ocrService;
             _onnxDppService = onnxDppService;
             _encryptionService = encryptionService;
+            _fieldEncryptionService = fieldEncryptionService;
+            _fieldConfidentialityService = fieldConfidentialityService;
             _dppRepository = dppRepository;
             _userRepository = userRepository;
             _env = env;
@@ -180,6 +186,66 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             
             // Return metadata only (no file stream)
             return Ok(doc);
+        }
+
+        // ===== TEMPORARY TEST ENDPOINT — Remove after testing =====
+        [HttpGet("test-encryption")]
+        [AllowAnonymous]
+        public IActionResult TestFieldEncryption()
+        {
+            var testValues = new[] { "350 LKR", "RSS Grade 1", "Bank of Ceylon", "Matara District" };
+            var results = new List<object>();
+
+            foreach (var original in testValues)
+            {
+                var encrypted = _fieldEncryptionService.Encrypt(original);
+                var decrypted = _fieldEncryptionService.Decrypt(encrypted.EncryptedValue, encrypted.IV);
+
+                results.Add(new
+                {
+                    original,
+                    encryptedValue = encrypted.EncryptedValue,
+                    iv = encrypted.IV,
+                    decrypted,
+                    match = original == decrypted
+                });
+            }
+
+            return Ok(new { success = results.All(r => ((dynamic)r).match), results });
+        }
+
+        // ===== TEMPORARY TEST ENDPOINT — Remove after testing =====
+        [HttpGet("test-classification")]
+        [AllowAnonymous]
+        public IActionResult TestFieldClassification()
+        {
+            var testFields = new Dictionary<string, string>
+            {
+                { "pricePerKg", "350 LKR" },
+                { "rubberGrade", "RSS Grade 1" },
+                { "totalAmount", "15000 LKR" },
+                { "bankName", "Bank of Ceylon" },
+                { "moisture", "12%" },
+                { "origin", "Matara District" }
+            };
+
+            var results = new List<object>();
+
+            foreach (var field in testFields)
+            {
+                var classification = _fieldConfidentialityService.Classify(field.Key, field.Value);
+
+                results.Add(new
+                {
+                    fieldName = field.Key,
+                    value = field.Value,
+                    isConfidential = classification.IsConfidential,
+                    confidenceScore = classification.ConfidenceScore,
+                    manualReviewRequired = classification.ManualReviewRequired
+                });
+            }
+
+            return Ok(results);
         }
 
     }
