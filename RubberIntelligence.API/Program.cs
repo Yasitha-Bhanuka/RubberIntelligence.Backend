@@ -84,6 +84,8 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Ser
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldEncryptionService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldConfidentialityService>();
 
 // Register Infrastructure Services
 builder.Services.AddScoped<JwtTokenService>();
