@@ -28,7 +28,9 @@ namespace RubberIntelligence.API.Data.Seed
                     Role = UserRole.Farmer,
                     PlantationName = "Green Valley Plantation",
                     Location = new GeoJsonPoint<GeoJson2DGeographicCoordinates>(
-                        new GeoJson2DGeographicCoordinates(80.1400, 6.5854)) // Kalutara area
+                        new GeoJson2DGeographicCoordinates(80.1400, 6.5854)), // Kalutara area
+                    IsApproved = true,
+                    CreatedAt = DateTime.UtcNow
                 });
             }
 
@@ -41,7 +43,9 @@ namespace RubberIntelligence.API.Data.Seed
                     FullName = "Admin User",
                     Email = "admin@test.com",
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword("pass123"),
-                    Role = UserRole.Admin
+                    Role = UserRole.Admin,
+                    IsApproved = true,
+                    CreatedAt = DateTime.UtcNow
                 });
             }
 
@@ -54,7 +58,9 @@ namespace RubberIntelligence.API.Data.Seed
                     FullName = "Global Buyer Inc",
                     Email = "buyer@test.com",
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword("pass123"),
-                    Role = UserRole.Buyer
+                    Role = UserRole.Buyer,
+                    IsApproved = true,
+                    CreatedAt = DateTime.UtcNow
                 });
             }
 
@@ -67,7 +73,9 @@ namespace RubberIntelligence.API.Data.Seed
                     FullName = "Ceylon Exporters Ltd",
                     Email = "exporter@test.com",
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword("pass123"),
-                    Role = UserRole.Exporter
+                    Role = UserRole.Exporter,
+                    IsApproved = true,
+                    CreatedAt = DateTime.UtcNow
                 });
             }
 
@@ -83,7 +91,9 @@ namespace RubberIntelligence.API.Data.Seed
                     Role = UserRole.Farmer,
                     PlantationName = "Sunrise Rubber Estate",
                     Location = new GeoJsonPoint<GeoJson2DGeographicCoordinates>(
-                        new GeoJson2DGeographicCoordinates(80.1500, 6.5900)) // ~1km from farmer1
+                        new GeoJson2DGeographicCoordinates(80.1500, 6.5900)), // ~1km from farmer1
+                    IsApproved = true,
+                    CreatedAt = DateTime.UtcNow
                 });
             }
         }

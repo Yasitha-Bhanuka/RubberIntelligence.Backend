@@ -31,6 +31,13 @@ namespace RubberIntelligence.API.Domain.Entities
         [BsonElement("location")]
         public GeoJsonPoint<GeoJson2DGeographicCoordinates>? Location { get; set; }
 
+        // Approval & Audit
+        [BsonElement("isApproved")]
+        public bool IsApproved { get; set; } = false;
+
+        [BsonElement("createdAt")]
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
         // Security Keys for DPP Encryption
         [BsonElement("publicKey")]
         public string? PublicKey { get; set; }

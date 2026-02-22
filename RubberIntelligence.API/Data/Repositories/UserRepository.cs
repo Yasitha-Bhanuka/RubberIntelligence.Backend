@@ -47,6 +47,19 @@ namespace RubberIntelligence.API.Data.Repositories
 
             return await _context.Users.Find(filter).ToListAsync();
         }
+
+        public async Task<List<User>> GetAllUsersAsync()
+        {
+            return await _context.Users
+                .Find(_ => true)
+                .SortByDescending(u => u.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task DeleteAsync(Guid id)
+        {
+            await _context.Users.DeleteOneAsync(u => u.Id == id);
+        }
     }
 }
 
