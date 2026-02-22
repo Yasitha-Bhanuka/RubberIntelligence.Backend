@@ -138,97 +138,57 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 };
             }
 
-            // Iterate through suggestions to find a rubber-related disease
-            foreach (var suggestion in suggestions)
+            var topSuggestion = suggestions[0];
+            var diseaseName = topSuggestion.Name ?? "Unknown Disease";
+            var probability = topSuggestion.Probability ?? 0;
+
+            // Determine severity based on confidence
+            string severity = probability switch
             {
-                var originalName = suggestion.Name ?? "";
-                var probability = suggestion.Probability ?? 0;
+                > 0.8 => "High",
+                > 0.5 => "Medium",
+                _ => "Low"
+            };
 
-                // Only consider reasonably confident predictions (e.g. > 20%) to avoid noise
-                if (probability < 0.2) continue;
+            // Build remedy from disease description or provide a default
+            var remedy = GetDiseaseRemedy(diseaseName);
 
-                var mappedLabel = MapToRubberLeafDisease(originalName);
-                if (mappedLabel != null)
-                {
-                    // Found a rubber-specific disease
-                    _logger.LogInformation("[PlantId] Mapped '{Original}' to '{Mapped}' ({Prob:P1})", originalName, mappedLabel, probability);
-                    
-                    var severity = probability switch
-                    {
-                        > 0.8 => "High",
-                        > 0.5 => "Medium",
-                        _ => "Low"
-                    };
+            _logger.LogInformation("[PlantId] Disease detected: {Disease} ({Prob:P1})", diseaseName, probability);
 
-                    return new PredictionResponse
-                    {
-                        Label = mappedLabel,
-                        Confidence = probability,
-                        Severity = severity,
-                        Remedy = GetDiseaseRemedy(mappedLabel)
-                    };
-                }
-            }
-
-            // If we get here, no rubber-specific disease was found in high-confidence suggestions
-            _logger.LogInformation("[PlantId] No rubber-specific disease found. Top suggestion was: {Top}", suggestions[0].Name);
-            
             return new PredictionResponse
             {
-                Label = "Non-Rubber Disease Detected",
-                Confidence = 0.0,
-                Severity = "N/A",
-                Remedy = "This condition is not recognized as a common rubber plantation disease. It may be a non-rubber plant or a less common issue. Please consult an expert.",
-                IsRejected = false // or true, depending on UX preference. keeping false to show the message.
+                Label = diseaseName,
+                Confidence = probability,
+                Severity = severity,
+                Remedy = remedy
             };
-        }
-
-        private static string? MapToRubberLeafDisease(string apiName)
-        {
-            var lowerName = apiName.ToLowerInvariant();
-
-            // 1. Anthracnose_Type (Colletotrichum species)
-            string[] anthracnoseKeywords = { 
-                "anthracnose", "colletotrichum", "gloeosporioides", "acutatum", "glomerella", 
-                "cliviae", "siamense", "boninense", "truncatum" 
-            };
-            if (anthracnoseKeywords.Any(k => lowerName.Contains(k))) return "Anthracnose_Type";
-
-            // 2. Corynespora_Leaf_Fall (Corynespora cassiicola)
-            string[] corynesporaKeywords = { "corynespora", "cassiicola" };
-            if (corynesporaKeywords.Any(k => lowerName.Contains(k))) return "Corynespora_Leaf_Fall";
-
-            // 3. Powdery_Mildew (Oidium heveae / Erysiphe)
-            string[] powderyKeywords = { "powdery mildew", "oidium", "erysiphe", "microsphaera", "quercicola", "golovinomyces", "podosphaera" };
-            if (powderyKeywords.Any(k => lowerName.Contains(k))) return "Powdery_Mildew";
-
-            // 4. Phytophthora_Leaf_Blight (Abnormal Leaf Fall)
-            string[] phytophthoraKeywords = { "phytophthora", "palmivora", "meadii", "botryosa", "citrophthora" };
-            if (phytophthoraKeywords.Any(k => lowerName.Contains(k))) return "Phytophthora_Leaf_Blight";
-
-            // 5. Leaf_Spot_Group (Various fungal spots)
-            // Includes: Pestalotiopsis, Curvularia, Drechslera (Bird's Eye), Alternaria, Cercospora, Fusicoccum, Guignardia
-            string[] leafSpotKeywords = { 
-                "leaf spot", "pestalotiopsis", "neopestalotiopsis", "curvularia", "drechslera", 
-                "alternaria", "cercospora", "fusicoccum", "guignardia", "lasiodiplodia", "verrucospora", "phyllosticta", "birds eye", "bird's eye"
-            };
-            if (leafSpotKeywords.Any(k => lowerName.Contains(k))) return "Leaf_Spot_Group";
-
-            return null;
         }
 
         private static string GetDiseaseRemedy(string diseaseName)
         {
-            return diseaseName switch
-            {
-                "Anthracnose_Type" => "Prune infected parts. Apply copper-based fungicides (Bordeaux mixture). Improve air circulation around trees.",
-                "Corynespora_Leaf_Fall" => "Remove fallen leaves (sanitation). Apply Mancozeb or Carbendazim fungicide. Avoid overhead watering.",
-                "Powdery_Mildew" => "Apply sulfur-based dusts or wettable sulfur sprays. Ensure good air circulation using thermal fogging if possible.",
-                "Phytophthora_Leaf_Blight" => "Remove and destroy infected fruits/leaves. Apply fungicides containing metalaxyl or fosetyl-aluminium. Improve drainage.",
-                "Leaf_Spot_Group" => "General leaf spot management: Remove infected leaves, apply broad-spectrum fungicides if severe, and maintain tree vigor.",
-                "Healthy" => "No disease detected. Monitor for environmental stresses and maintain regular care.",
-                _ => "Consult a rubber plantation expert for specific advice."
-            };
+            // Provide specific remedies for common rubber tree diseases
+            // The API returns standardized disease names
+            var lowerName = diseaseName.ToLowerInvariant();
+
+            if (lowerName.Contains("anthracnose"))
+                return "Prune infected parts. Apply copper-based fungicides (Bordeaux mixture). Improve air circulation around trees.";
+            if (lowerName.Contains("powdery mildew"))
+                return "Apply sulfur-based dusts or wettable sulfur sprays. Ensure good air circulation. Remove severely affected leaves.";
+            if (lowerName.Contains("leaf spot") || lowerName.Contains("corynespora"))
+                return "Remove fallen leaves. Apply Mancozeb or Carbendazim fungicide. Avoid overhead watering.";
+            if (lowerName.Contains("blight"))
+                return "Remove and destroy infected plant parts. Apply appropriate fungicides. Improve drainage.";
+            if (lowerName.Contains("rust"))
+                return "Apply fungicides containing triazole. Remove infected leaves. Improve air circulation.";
+            if (lowerName.Contains("water") && (lowerName.Contains("deficiency") || lowerName.Contains("stress")))
+                return "Ensure adequate and regular watering. Check soil drainage. Apply mulch to retain moisture.";
+            if (lowerName.Contains("nutrient") || lowerName.Contains("deficiency"))
+                return "Apply balanced fertilizer (NPK). Check soil pH. Consider foliar feeding for quick response.";
+            if (lowerName.Contains("healthy") || lowerName.Contains("abiotic"))
+                return "No disease detected. Monitor for environmental stresses and maintain regular care.";
+
+            // Generic remedy for unrecognized conditions
+            return $"Condition '{diseaseName}' detected. Consult a rubber plantation expert or agricultural extension officer for specific treatment recommendations.";
         }
 
         // ── Plant.id API v3 Response DTOs ──────────────────────────────────────

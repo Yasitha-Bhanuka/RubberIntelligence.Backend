@@ -155,35 +155,3 @@ Before any image is sent to the AI services, it passes through:
 
 Each detection is saved as a `DiseaseRecord` in MongoDB with fields:
 `Id`, `UserId`, `DiseaseType`, `PredictedLabel`, `Confidence`, `Timestamp`, `ImagePath`
-
-## Rubber-Specific Customization
-
-The system includes strict filtering to ensure only results relevant to rubber plantations are returned. Non-relevant detections are flagged with specific messages.
-
-**Note:** The system maps both common names and scientific names (e.g., *Colletotrichum*, *Oidium*) to the standardized categories below.
-
-### Allowed Leaf Diseases
-- **Anthracnose_Type** (*Colletotrichum*, *Glomerella*)
-- **Corynespora_Leaf_Fall** (*Corynespora cassiicola*)
-- **Powdery_Mildew** (*Oidium heveae*, *Erysiphe*)
-- **Phytophthora_Leaf_Blight** (*Phytophthora*, *Blight*)
-- **Leaf_Spot_Group** (*Pestalotiopsis*, *Curvularia*, *Drechslera*, etc.)
-- **Healthy**
-
-### Allowed Pests
-- **Rubber_Leaf_Skeletonizer** (Moth larvae, Caterpillars)
-- **Rubber_Leafhopper** (*Cicadellidae*, *Jassid*, *Empoasca*)
-- **Red_Spider_Mite** (*Tetranychus*, *Oligonychus*)
-- **Thrips** (*Thysanoptera*)
-- **Rubber_Mealybug** (*Pseudococcidae*, *Ferrisia*, *Paracoccus*)
-- **Weevil** (*Curculionidae*, *Hypomeces*)
-
-### Allowed Weeds
-- **Imperata** (Cogon Grass)
-- **Chromolaena** (Siam Weed)
-- **Mikania** (Mile-a-minute)
-- **Ageratum** (Billygoat Weed)
-- **Axonopus** (Carpet Grass)
-- **Panicum** (Guinea Grass)
-- **Mimosa** (Sensitive Plant)
-
