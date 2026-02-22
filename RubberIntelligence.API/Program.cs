@@ -5,6 +5,8 @@ using RubberIntelligence.API.Data;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Data.Seed;
 using RubberIntelligence.API.Infrastructure.Security;
+using RubberIntelligence.API.Modules.DiseaseDetection.Models;
+using RubberIntelligence.API.Modules.DiseaseDetection.Services;
 using System.Text;
 using DotNetEnv;
 
@@ -51,6 +53,9 @@ builder.Services.Configure<MongoDbSettings>(options =>
     options.DatabaseName = builder.Configuration.GetSection("MongoDbSettings:DatabaseName").Value!;
 });
 
+// Configure Alert Settings
+builder.Services.Configure<AlertSettings>(builder.Configuration.GetSection(AlertSettings.SectionName));
+
 // Register Data Services
 builder.Services.AddSingleton<AppDbContext>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -71,6 +76,7 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Servi
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.ContentVerificationService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IImageValidationService, RubberIntelligence.API.Modules.DiseaseDetection.Services.ImageValidationService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.IDiseaseDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.CompositeDiseaseService>();
+builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.PriceForecasting.Services.IPriceForecastingService, RubberIntelligence.API.Modules.PriceForecasting.Services.OnnxPriceForecastingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGradingService, RubberIntelligence.API.Modules.Grading.Services.OnnxGradingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Services.ILatexQualityService, RubberIntelligence.API.Modules.RubberLatexQuality.Services.OnnxLatexQualityService>();
@@ -127,9 +133,12 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Seed Database
+// Ensure geospatial indexes + Seed Database
 using (var scope = app.Services.CreateScope())
 {
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await dbContext.EnsureIndexesAsync();
+
     var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
     await seeder.SeedAsync();
 }

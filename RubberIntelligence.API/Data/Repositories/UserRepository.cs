@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using RubberIntelligence.API.Domain.Entities;
+using RubberIntelligence.API.Domain.Enums;
 
 namespace RubberIntelligence.API.Data.Repositories
 {
@@ -36,5 +37,16 @@ namespace RubberIntelligence.API.Data.Repositories
         {
             return await _context.Users.Find(u => u.Email == email).AnyAsync();
         }
+
+        public async Task<List<User>> GetNearbyFarmersAsync(double longitude, double latitude, double maxDistanceMeters)
+        {
+            var filter = Builders<User>.Filter.And(
+                Builders<User>.Filter.Eq(u => u.Role, UserRole.Farmer),
+                Builders<User>.Filter.NearSphere(u => u.Location, longitude, latitude, maxDistanceMeters)
+            );
+
+            return await _context.Users.Find(filter).ToListAsync();
+        }
     }
 }
+

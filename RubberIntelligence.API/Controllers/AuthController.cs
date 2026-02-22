@@ -1,6 +1,11 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver.GeoJsonObjectModel;
 using RubberIntelligence.API.Data.Repositories;
+using RubberIntelligence.API.Domain.Entities;
+using RubberIntelligence.API.Domain.Enums;
 using RubberIntelligence.API.Infrastructure.Security;
+using System.Security.Claims;
 
 namespace RubberIntelligence.API.Controllers
 {
@@ -8,6 +13,17 @@ namespace RubberIntelligence.API.Controllers
     {
         public required string Email { get; set; }
         public required string Password { get; set; }
+    }
+
+    public class RegisterDto
+    {
+        public required string FullName { get; set; }
+        public required string Email { get; set; }
+        public required string Password { get; set; }
+        public required string Role { get; set; }
+        public string? PlantationName { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 
     [ApiController]
@@ -26,16 +42,12 @@ namespace RubberIntelligence.API.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
         {
-            // Fetch User from MongoDB
             var user = await _userRepository.GetByEmailAsync(loginDto.Email);
-
-            // Validate User & Password (Plaintext for now as per previous logic)
-            if (user == null || user.PasswordHash != loginDto.Password)
+            if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
             {
                 return Unauthorized("Invalid Credentials");
             }
 
-            // Generate Token
             var token = _jwtTokenService.GenerateToken(user);
 
             return Ok(new
@@ -43,11 +55,102 @@ namespace RubberIntelligence.API.Controllers
                 Token = token,
                 User = new
                 {
+                    Id = user.Id,
                     Email = user.Email,
-                    Role = user.Role.ToString().ToLower(), // "farmer", "admin"
-                    Name = user.FullName
+                    Role = user.Role.ToString().ToLower(),
+                    Name = user.FullName,
+                    PlantationName = user.PlantationName,
+                    Latitude = user.Location?.Coordinates.Latitude,
+                    Longitude = user.Location?.Coordinates.Longitude
                 }
+            });
+        }
+
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
+        {
+            // Check if email already exists
+            if (await _userRepository.ExistsAsync(registerDto.Email))
+            {
+                return BadRequest("Email already registered");
+            }
+
+            // Parse role
+            if (!Enum.TryParse<UserRole>(registerDto.Role, ignoreCase: true, out var role))
+            {
+                return BadRequest("Invalid role. Valid roles: Farmer, Admin, Researcher, Buyer, Exporter");
+            }
+
+            // Build GeoJSON location if coordinates provided
+            GeoJsonPoint<GeoJson2DGeographicCoordinates>? location = null;
+            if (registerDto.Latitude.HasValue && registerDto.Longitude.HasValue)
+            {
+                location = new GeoJsonPoint<GeoJson2DGeographicCoordinates>(
+                    new GeoJson2DGeographicCoordinates(
+                        registerDto.Longitude.Value,
+                        registerDto.Latitude.Value));
+            }
+
+            // Create user with hashed password
+            var user = new User
+            {
+                Id = Guid.NewGuid(),
+                FullName = registerDto.FullName,
+                Email = registerDto.Email,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password),
+                Role = role,
+                PlantationName = registerDto.PlantationName,
+                Location = location
+            };
+
+            await _userRepository.CreateUserAsync(user);
+
+            // Generate token and return
+            var token = _jwtTokenService.GenerateToken(user);
+
+            return Ok(new
+            {
+                Token = token,
+                User = new
+                {
+                    Id = user.Id,
+                    Email = user.Email,
+                    Role = user.Role.ToString().ToLower(),
+                    Name = user.FullName,
+                    PlantationName = user.PlantationName,
+                    Latitude = user.Location?.Coordinates.Latitude,
+                    Longitude = user.Location?.Coordinates.Longitude
+                }
+            });
+        }
+
+        [HttpGet("me")]
+        [Authorize]
+        public async Task<IActionResult> GetProfile()
+        {
+            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdString, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null)
+            {
+                return NotFound("User not found");
+            }
+
+            return Ok(new
+            {
+                Id = user.Id,
+                Email = user.Email,
+                Role = user.Role.ToString().ToLower(),
+                Name = user.FullName,
+                PlantationName = user.PlantationName,
+                Latitude = user.Location?.Coordinates.Latitude,
+                Longitude = user.Location?.Coordinates.Longitude
             });
         }
     }
 }
+

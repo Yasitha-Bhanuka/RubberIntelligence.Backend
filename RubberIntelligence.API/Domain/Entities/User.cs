@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver.GeoJsonObjectModel;
 using RubberIntelligence.API.Domain.Enums;
 
 namespace RubberIntelligence.API.Domain.Entities
@@ -22,6 +23,13 @@ namespace RubberIntelligence.API.Domain.Entities
         [BsonRepresentation(BsonType.String)]
         [BsonElement("role")]
         public UserRole Role { get; set; }
+
+        // Plantation Information
+        [BsonElement("plantationName")]
+        public string? PlantationName { get; set; }
+
+        [BsonElement("location")]
+        public GeoJsonPoint<GeoJson2DGeographicCoordinates>? Location { get; set; }
 
         // Security Keys for DPP Encryption
         [BsonElement("publicKey")]

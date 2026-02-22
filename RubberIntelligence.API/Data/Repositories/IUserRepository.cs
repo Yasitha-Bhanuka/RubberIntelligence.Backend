@@ -9,5 +9,7 @@ namespace RubberIntelligence.API.Data.Repositories
         Task CreateUserAsync(User user);
         Task UpdateAsync(User user);
         Task<bool> ExistsAsync(string email);
+        Task<List<User>> GetNearbyFarmersAsync(double longitude, double latitude, double maxDistanceMeters);
     }
 }
+
