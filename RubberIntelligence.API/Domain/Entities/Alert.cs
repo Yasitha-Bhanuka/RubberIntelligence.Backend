@@ -23,6 +23,12 @@ namespace RubberIntelligence.API.Domain.Entities
         [BsonElement("distanceKm")]
         public double DistanceKm { get; set; }
 
+        [BsonElement("latitude")]
+        public double Latitude { get; set; }
+
+        [BsonElement("longitude")]
+        public double Longitude { get; set; }
+
         [BsonElement("createdAt")]
         public DateTime CreatedAt { get; set; }
 

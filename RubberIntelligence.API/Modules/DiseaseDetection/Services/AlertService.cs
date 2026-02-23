@@ -65,6 +65,8 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                         latitude, longitude,
                         farmer.Location!.Coordinates.Latitude,
                         farmer.Location!.Coordinates.Longitude),
+                    Latitude = latitude,
+                    Longitude = longitude,
                     CreatedAt = DateTime.UtcNow,
                     IsRead = false
                 }).ToList();
