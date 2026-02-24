@@ -5,14 +5,14 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
     public class CompositeDiseaseService : IDiseaseDetectionService
     {
-        private readonly OnnxLeafDiseaseService _leafService;
-        private readonly OnnxPestDetectionService _pestService;
+        private readonly PlantIdDiseaseService _leafService;
+        private readonly InsectIdPestService _pestService;
         private readonly PlantNetWeedService _weedService;
         private readonly IImageValidationService _validationService;
 
         public CompositeDiseaseService(
-            OnnxLeafDiseaseService leafService, 
-            OnnxPestDetectionService pestService, 
+            PlantIdDiseaseService leafService, 
+            InsectIdPestService pestService, 
             PlantNetWeedService weedService,
             IImageValidationService validationService)
         {
@@ -39,7 +39,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 };
             }
 
-            // 2. Route to correct AI model based on type
+            // 2. Route to correct AI service based on type
             if (request.Type == DiseaseType.Pest)
             {
                 return await _pestService.PredictAsync(request);
@@ -56,3 +56,4 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
         }
     }
 }
+

@@ -23,8 +23,14 @@ namespace RubberIntelligence.API.Infrastructure.Security
             {
                 new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
                 new Claim(JwtRegisteredClaimNames.Email, user.Email),
-                new Claim(ClaimTypes.Role, user.Role.ToString())
+                new Claim(ClaimTypes.Role, user.Role.ToString()),
+                new Claim(ClaimTypes.Name, user.FullName)
             };
+
+            if (!string.IsNullOrEmpty(user.PlantationName))
+            {
+                claims.Add(new Claim("plantationName", user.PlantationName));
+            }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

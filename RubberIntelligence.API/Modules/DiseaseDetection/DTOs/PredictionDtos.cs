@@ -7,6 +7,8 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.DTOs
     {
         public required IFormFile Image { get; set; }
         public required DiseaseType Type { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 
     public class PredictionResponse
