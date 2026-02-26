@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver.GeoJsonObjectModel;
 using RubberIntelligence.API.Modules.DiseaseDetection.Enums;
 
 namespace RubberIntelligence.API.Domain.Entities
@@ -28,5 +29,9 @@ namespace RubberIntelligence.API.Domain.Entities
 
         [BsonElement("timestamp")]
         public DateTime Timestamp { get; set; }
+
+        [BsonElement("location")]
+        public GeoJsonPoint<GeoJson2DGeographicCoordinates>? Location { get; set; }
     }
 }
+
