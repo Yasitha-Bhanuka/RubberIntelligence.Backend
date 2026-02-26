@@ -7,6 +7,8 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.DTOs
     {
         public required IFormFile Image { get; set; }
         public required DiseaseType Type { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 
     public class PredictionResponse
@@ -15,6 +17,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.DTOs
         public double Confidence { get; set; }
         public required string Remedy { get; set; }
         public required string Severity { get; set; }
-        // For future: maybe bounding boxes, etc.
+        public bool IsRejected { get; set; } = false;
+        public string? RejectionReason { get; set; }
     }
 }

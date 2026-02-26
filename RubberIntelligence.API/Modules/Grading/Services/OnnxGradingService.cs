@@ -134,10 +134,16 @@ namespace RubberIntelligence.API.Modules.Grading.Services
 
         private string GetSuggestion(string label)
         {
-            if (label.Contains("Good")) return "High quality sheet. Store in a dry, ventilated area.";
-            if (label.Contains("Pin Head")) return "Caused by gas formation during coagulation. Use clean water and proper acid dosage.";
-            if (label.Contains("Reaper")) return "Physical damage during processing. Check rollers and handling equipment.";
-            return "Contact an expert.";
+            if (label.Contains("Good")) 
+                return "• No defects detected; sheet is of premium quality.\n• Maintain current coagulation and milling standards.\n• Store in a cool, dry, dark, and well-ventilated area.\n• Avoid direct sunlight to prevent oxidation and degradation.\n• Ensure sheets are fully dry before stacking to prevent mold.";
+            
+            if (label.Contains("Pin Head")) 
+                return "• Defect Identified: Pin Head Bubbles (Small air pockets).\n• Primary Cause: Gas formation during the coagulation process.\n• Solution: Use clean, filtered water and check acid dosage.\n• Ensure proper removing of bubbles during rolling/milling.\n• Avoid excessive agitation of latex before coagulation.";
+            
+            if (label.Contains("Reaper")) 
+                return "• Defect Identified: Reaper Marks (Physical cuts/indentations).\n• Primary Cause: Physical damage during milling or handling.\n• Check milling rollers for misalignment, wear, or debris.\n• Adjust milling gap to prevent excessive pressure on sheets.\n• Train staff on proper handling techniques to avoid tearing.";
+            
+            return "• Contact an expert for detailed analysis.\n• Review production log for anomalies.\n• Check raw material quality.\n• Inspect machinery for malfunctions.";
         }
     }
 }
