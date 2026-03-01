@@ -13,34 +13,32 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
     {
         private readonly GeminiOcrService _ocrService;
         private readonly OnnxDppService _onnxDppService;
-        private readonly DppEncryptionService _encryptionService;
-        private readonly FieldEncryptionService _fieldEncryptionService;
-        private readonly FieldConfidentialityService _fieldConfidentialityService;
+        private readonly DppDocumentProcessingService _processingService; // Fix 2: owns classify+encrypt
+        private readonly DppService _dppService;
         private readonly IDppRepository _dppRepository;
-        private readonly IUserRepository _userRepository; // To validate user existance if needed, mostly reliance on Claims
+        private readonly IUserRepository _userRepository;
         private readonly IWebHostEnvironment _env;
 
         public DppController(
-            GeminiOcrService ocrService, 
-            OnnxDppService onnxDppService, 
-            DppEncryptionService encryptionService,
-            FieldEncryptionService fieldEncryptionService,
-            FieldConfidentialityService fieldConfidentialityService,
+            GeminiOcrService ocrService,
+            OnnxDppService onnxDppService,
+            DppDocumentProcessingService processingService,
+            DppService dppService,
             IDppRepository dppRepository,
             IUserRepository userRepository,
             IWebHostEnvironment env)
         {
-            _ocrService = ocrService;
-            _onnxDppService = onnxDppService;
-            _encryptionService = encryptionService;
-            _fieldEncryptionService = fieldEncryptionService;
-            _fieldConfidentialityService = fieldConfidentialityService;
-            _dppRepository = dppRepository;
-            _userRepository = userRepository;
-            _env = env;
+            _ocrService        = ocrService;
+            _onnxDppService    = onnxDppService;
+            _processingService = processingService;
+            _dppService        = dppService;
+            _dppRepository     = dppRepository;
+            _userRepository    = userRepository;
+            _env               = env;
         }
 
-        [Authorize(Roles = "Buyer,Admin")] // Only Buyers (and Admin) upload documents
+        // ── POST /api/dpp/upload ─────────────────────────────────────────
+        [Authorize(Roles = "Buyer,Admin")]
         [HttpPost("upload")]
         public async Task<IActionResult> UploadDocument([FromForm] DocumentUploadRequest request)
         {
@@ -53,88 +51,115 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             var uploadsFolder = Path.Combine(_env.ContentRootPath, "Uploads", "Dpp");
             Directory.CreateDirectory(uploadsFolder);
             var tempPath = Path.Combine(uploadsFolder, Guid.NewGuid() + Path.GetExtension(request.File.FileName));
-            
-            using (var stream = new FileStream(tempPath, FileMode.Create))
-            {
-                await request.File.CopyToAsync(stream);
-            }
 
-            // 2. Perform OCR (Gemini)
-            string extractedText;
-            try 
+            using (var stream = new FileStream(tempPath, FileMode.Create))
+                await request.File.CopyToAsync(stream);
+
+            // 2. Gemini structured extraction → Dictionary<string, string>
+            Dictionary<string, string> extractedFields;
+            try
             {
-                using (var fileStream = new FileStream(tempPath, FileMode.Open, FileAccess.Read))
-                {
-                    extractedText = await _ocrService.ExtractTextAsync(fileStream, request.File.ContentType);
-                }
+                using var fileStream = new FileStream(tempPath, FileMode.Open, FileAccess.Read);
+                extractedFields = await _ocrService.ExtractFieldsAsync(fileStream, request.File.ContentType);
             }
             catch (HttpRequestException ex)
             {
                 if (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                {
-                     return StatusCode(429, new { error = "Gemini API Quota Exceeded. Please try again later.", details = ex.Message });
-                }
-                
-                return StatusCode((int)(ex.StatusCode ?? System.Net.HttpStatusCode.InternalServerError), new { error = "OCR Service Failed", details = ex.Message });
+                    return StatusCode(429, new { error = "Gemini API Quota Exceeded. Please try again later.", details = ex.Message });
+
+                return StatusCode((int)(ex.StatusCode ?? System.Net.HttpStatusCode.InternalServerError),
+                    new { error = "OCR Service Failed", details = ex.Message });
             }
             catch (Exception ex)
             {
-                 return StatusCode(500, new { error = "Internal Server Error during processing", details = ex.Message });
+                return StatusCode(500, new { error = "Internal Server Error during OCR", details = ex.Message });
             }
 
-            if (string.IsNullOrWhiteSpace(extractedText))
-            {
-                extractedText = "No readable text found.";
-            }
+            // 3. Classify document type using ONNX
+            var extractedText = extractedFields.Count > 0
+                ? string.Join(" ", extractedFields.Values.Where(v => !string.IsNullOrWhiteSpace(v)))
+                : "No readable text found.";
 
-            // 3. Classify
             var classificationResult = _onnxDppService.ClassifyDocument(extractedText, request.File.FileName);
 
-            string finalStoredPath = tempPath;
-            bool isEncrypted = false;
-
-            // 4. Encrypt if necessary
-            if (classificationResult.IsEncrypted)
-            {
-                var encryptedPath = tempPath + ".enc";
-                await _encryptionService.EncryptFileAsync(request.File, encryptedPath);
-                
-                // Delete original plain file if sensitive
-                if (System.IO.File.Exists(tempPath)) System.IO.File.Delete(tempPath);
-                
-                finalStoredPath = encryptedPath;
-                isEncrypted = true;
-            }
-
-            // 5. Save Record to DB
+            // 4. Save DppDocument record
             var dppDoc = new DppDocument
             {
-                // Id is auto-generated by MongoDB usually, but if DppDocument defines it as string/ObjectId, handle appropriately.
-                // Assuming it's auto-gen or we can set it.
-                OriginalFileName = request.File.FileName,
-                StoredFilePath = finalStoredPath,
-                ContentType = request.File.ContentType,
-                Classification = classificationResult.Classification,
-                ConfidenceScore = classificationResult.ConfidenceScore,
-                IsEncrypted = isEncrypted,
-                UploadedAt = DateTime.UtcNow,
-                UploadedBy = userId,
-                ExtractedTextSummary = classificationResult.ExtractedText, // Only snippet stored
-                DetectedKeywords = classificationResult.InfluentialKeywords
+                OriginalFileName     = request.File.FileName,
+                StoredFilePath       = tempPath,
+                ContentType          = request.File.ContentType,
+                Classification       = classificationResult.Classification,
+                ConfidenceScore      = classificationResult.ConfidenceScore,
+                UploadedAt           = DateTime.UtcNow,
+                UploadedBy           = userId,
+                ExtractedTextSummary = classificationResult.ExtractedText,
+                DetectedKeywords     = classificationResult.InfluentialKeywords
             };
 
             await _dppRepository.CreateAsync(dppDoc);
 
-            // Update result with ID for Frontend
-            // DppResult (DTO) usually doesn't have ID, might need to wrap or extend.
-            // For now, return the entity or an anonymous object.
-            
-            return Ok(new { 
-                dppId = dppDoc.Id, // Ensure Model generates this
-                result = classificationResult
+            // 5. Per-field: classify → encrypt (if confidential) — delegated to processing service
+            var fieldRecords = _processingService.ProcessFields(extractedFields, dppDoc.Id);
+
+            // 6. Bulk-save ExtractedField records to MongoDB
+            await _dppRepository.SaveExtractedFieldsAsync(fieldRecords);
+
+            // Fix 1: never expose ExtractedText or raw values in HTTP response
+            return Ok(new
+            {
+                dppId           = dppDoc.Id,
+                fieldsExtracted = fieldRecords.Count,
+                fields = fieldRecords.Select(f => new
+                {
+                    f.FieldName,
+                    f.IsConfidential,
+                    f.ConfidenceScore,
+                    hasValue = !string.IsNullOrWhiteSpace(f.EncryptedValue)
+                }),
+                classification = new
+                {
+                    classificationResult.Classification,
+                    classificationResult.ConfidenceScore,
+                    classificationResult.ConfidenceLevel,
+                    classificationResult.SystemAction,
+                    classificationResult.Explanation,
+                    classificationResult.InfluentialKeywords
+                    // ExtractedText + IsEncrypted intentionally excluded — may contain confidential values
+                }
             });
         }
 
+        // ── POST /api/dpp/{dppId}/generate-passport ──────────────────────
+        // FIX #2 & #3 — expose DppService.GenerateDpp via HTTP
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpPost("{dppId}/generate-passport")]
+        public async Task<IActionResult> GeneratePassport(string dppId)
+        {
+            try
+            {
+                var passport = await _dppService.GenerateDpp(dppId);
+                return Ok(passport);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to generate DPP", details = ex.Message });
+            }
+        }
+
+        // ── GET /api/dpp/passport/{dppId} ────────────────────────────────
+        // Fix 3: unified naming — route param is dppId everywhere
+        [Authorize(Roles = "Buyer,Exporter,Admin")]
+        [HttpGet("passport/{dppId}")]
+        public async Task<IActionResult> GetPassport(string dppId)
+        {
+            var passport = await _dppRepository.GetDppByLotIdAsync(dppId);
+            if (passport == null)
+                return NotFound(new { error = "No passport found. Call POST /{dppId}/generate-passport first." });
+
+            return Ok(passport);
+        }
+
+        // ── GET /api/dpp/my-uploads ──────────────────────────────────────
         [Authorize(Roles = "Buyer,Admin")]
         [HttpGet("my-uploads")]
         public async Task<IActionResult> GetMyDocuments()
@@ -146,107 +171,31 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             return Ok(docs);
         }
 
+        // ── GET /api/dpp/{id}/access ─────────────────────────────────────
         [Authorize(Roles = "Exporter,Admin")]
         [HttpGet("{id}/access")]
         public async Task<IActionResult> GetDocumentAccess(string id)
         {
             var doc = await _dppRepository.GetByIdAsync(id);
-            if (doc == null) return NotFound("Document not found");
+            if (doc == null) return NotFound("Document not found.");
 
-            // Exporters can view content.
-            // If encrypted, decrypt on the fly.
-            
             if (!System.IO.File.Exists(doc.StoredFilePath))
-                return NotFound("Physical file missing");
+                return NotFound("Physical file missing.");
 
-            if (doc.IsEncrypted)
-            {
-                try {
-                    var plainStream = await _encryptionService.DecryptFileAsync(doc.StoredFilePath);
-                    // Return file
-                    return File(plainStream, doc.ContentType, doc.OriginalFileName);
-                }
-                catch(Exception ex)
-                {
-                    return StatusCode(500, "Decryption failed: " + ex.Message);
-                }
-            }
-            else
-            {
-                var stream = new FileStream(doc.StoredFilePath, FileMode.Open, FileAccess.Read);
-                return File(stream, doc.ContentType, doc.OriginalFileName);
-            }
+            var stream = new FileStream(doc.StoredFilePath, FileMode.Open, FileAccess.Read);
+            return File(stream, doc.ContentType, doc.OriginalFileName);
         }
+
+        // ── GET /api/dpp/{id} ────────────────────────────────────────────
         [Authorize(Roles = "Exporter,Admin")]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetDocumentMetadata(string id)
         {
             var doc = await _dppRepository.GetByIdAsync(id);
-            if (doc == null) return NotFound("Document not found");
-            
-            // Return metadata only (no file stream)
+            if (doc == null) return NotFound("Document not found.");
             return Ok(doc);
         }
 
-        // ===== TEMPORARY TEST ENDPOINT — Remove after testing =====
-        [HttpGet("test-encryption")]
-        [AllowAnonymous]
-        public IActionResult TestFieldEncryption()
-        {
-            var testValues = new[] { "350 LKR", "RSS Grade 1", "Bank of Ceylon", "Matara District" };
-            var results = new List<object>();
-
-            foreach (var original in testValues)
-            {
-                var encrypted = _fieldEncryptionService.Encrypt(original);
-                var decrypted = _fieldEncryptionService.Decrypt(encrypted.EncryptedValue, encrypted.IV);
-
-                results.Add(new
-                {
-                    original,
-                    encryptedValue = encrypted.EncryptedValue,
-                    iv = encrypted.IV,
-                    decrypted,
-                    match = original == decrypted
-                });
-            }
-
-            return Ok(new { success = results.All(r => ((dynamic)r).match), results });
-        }
-
-        // ===== TEMPORARY TEST ENDPOINT — Remove after testing =====
-        [HttpGet("test-classification")]
-        [AllowAnonymous]
-        public IActionResult TestFieldClassification()
-        {
-            var testFields = new Dictionary<string, string>
-            {
-                { "pricePerKg", "350 LKR" },
-                { "rubberGrade", "RSS Grade 1" },
-                { "totalAmount", "15000 LKR" },
-                { "bankName", "Bank of Ceylon" },
-                { "moisture", "12%" },
-                { "origin", "Matara District" }
-            };
-
-            var results = new List<object>();
-
-            foreach (var field in testFields)
-            {
-                var classification = _fieldConfidentialityService.Classify(field.Key, field.Value);
-
-                results.Add(new
-                {
-                    fieldName = field.Key,
-                    value = field.Value,
-                    isConfidential = classification.IsConfidential,
-                    confidenceScore = classification.ConfidenceScore,
-                    manualReviewRequired = classification.ManualReviewRequired
-                });
-            }
-
-            return Ok(results);
-        }
-
+        // FIX #4 — test endpoints removed
     }
 }

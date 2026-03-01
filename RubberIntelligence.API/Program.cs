@@ -83,9 +83,11 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Ser
 
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldEncryptionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldConfidentialityService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppDocumentProcessingService>(); // Fix 2: clean architecture
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>(); // File-level AES encryption
 
 // Register Infrastructure Services
 builder.Services.AddScoped<JwtTokenService>();
@@ -136,13 +138,23 @@ app.UseAuthorization();
 app.MapControllers();
 
 // Ensure geospatial indexes + Seed Database
+// Wrapped in try-catch: a MongoDB timeout must not crash the whole app
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await dbContext.EnsureIndexesAsync();
+    try
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.EnsureIndexesAsync();
 
-    var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
-    await seeder.SeedAsync();
+        var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
+        await seeder.SeedAsync();
+    }
+    catch (Exception ex)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning(ex, "⚠️  MongoDB startup tasks failed (indexes/seed). " +
+            "Check your Atlas IP whitelist or network. The API will still start.");
+    }
 }
 
 app.Run();

@@ -14,7 +14,9 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
         private readonly string _modelPath;
         private readonly ILogger<OnnxDppService> _logger;
         private readonly IUserRepository _userRepository;
+#pragma warning disable CS0169 // Reserved for future ONNX inference pipeline integration
         private InferenceSession? _session;
+#pragma warning restore CS0169
         
         // Mocked or Simplified pipeline dependencies
         // Ideally handled via properly exported ONNX pipeline or Python microservice.
@@ -23,7 +25,25 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
         {
             _logger = logger;
             _userRepository = userRepository;
-            _modelPath = Path.Combine(env.ContentRootPath, "Modules", "Dpp", "Models", "dpp_classifier_model.onnx");
+            _modelPath = Path.Combine(env.ContentRootPath, "Modules", "Dpp", "Models", "dpp_classifier_model_large.onnx");
+
+            // Attempt to load ONNX session — fall back to keyword heuristics if unavailable
+            if (File.Exists(_modelPath))
+            {
+                try
+                {
+                    _session = new InferenceSession(_modelPath);
+                    _logger.LogInformation("[DppAI] ONNX model loaded from {Path}", _modelPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[DppAI] Failed to load ONNX model — falling back to keyword heuristics");
+                }
+            }
+            else
+            {
+                _logger.LogWarning("[DppAI] Model file not found at {Path} — using keyword heuristics", _modelPath);
+            }
         }
 
         public ClassificationResultDto ClassifyDocument(string extractedText, string fileName)
