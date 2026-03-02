@@ -25,7 +25,9 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         public string? DppDocumentId { get; set; }
 
         [BsonElement("status")]
-        public string Status { get; set; } = "Active"; // Active, Sold, Archived
+        // Lifecycle statuses: AVAILABLE, REQUESTED, APPROVED, COMPLETED, REJECTED, REINSPECTION
+        // Legacy statuses (backward-compat): Active, Sold, Archived
+        public string Status { get; set; } = "AVAILABLE";
 
         [BsonElement("soldToExporterId")]
         public string? SoldToExporterId { get; set; }

@@ -20,6 +20,9 @@ namespace RubberIntelligence.API.Modules.Dpp.Models
 
         public bool ConfidentialDataExists { get; set; }
 
+        // Lifecycle: GENERATED, VERIFIED, REINSPECTION_REQUESTED, ACCEPTED, REJECTED
+        public string LifecycleState { get; set; } = "GENERATED";
+
         public string DppHash { get; set; } = string.Empty;
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -11,38 +11,43 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
 {
     public class OnnxDppService
     {
-        private readonly string _modelPath;
         private readonly ILogger<OnnxDppService> _logger;
-        private readonly IUserRepository _userRepository;
-#pragma warning disable CS0169 // Reserved for future ONNX inference pipeline integration
-        private InferenceSession? _session;
-#pragma warning restore CS0169
-        
-        // Mocked or Simplified pipeline dependencies
-        // Ideally handled via properly exported ONNX pipeline or Python microservice.
-        
-        public OnnxDppService(IWebHostEnvironment env, ILogger<OnnxDppService> logger, IUserRepository userRepository)
+        // IServiceScopeFactory is used instead of IUserRepository directly.
+        // A Singleton cannot hold a Scoped dependency — we create a scope on demand.
+        private readonly IServiceScopeFactory _scopeFactory;
+
+        // Static: loaded once for the entire application lifetime (Singleton service)
+        private static InferenceSession? _session;
+        private static bool _sessionLoadAttempted = false;
+
+        public OnnxDppService(IWebHostEnvironment env, ILogger<OnnxDppService> logger, IServiceScopeFactory scopeFactory)
         {
             _logger = logger;
-            _userRepository = userRepository;
-            _modelPath = Path.Combine(env.ContentRootPath, "Modules", "Dpp", "Models", "dpp_classifier_model_large.onnx");
+            _scopeFactory = scopeFactory;
 
-            // Attempt to load ONNX session — fall back to keyword heuristics if unavailable
-            if (File.Exists(_modelPath))
+            // Load only once — skip if already attempted (success or failure)
+            if (!_sessionLoadAttempted)
             {
-                try
+                _sessionLoadAttempted = true;
+                var modelPath = Path.Combine(env.ContentRootPath, "Modules", "Dpp", "Models", "dpp_classifier_model_large.onnx");
+
+                if (File.Exists(modelPath))
                 {
-                    _session = new InferenceSession(_modelPath);
-                    _logger.LogInformation("[DppAI] ONNX model loaded from {Path}", _modelPath);
+                    try
+                    {
+                        _session = new InferenceSession(modelPath);
+                        _logger.LogInformation("[DppAI] ONNX model loaded successfully from {Path}", modelPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "[DppAI] Failed to load ONNX model — falling back to keyword heuristics. " +
+                            "Cause: {Message}", ex.Message);
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogError(ex, "[DppAI] Failed to load ONNX model — falling back to keyword heuristics");
+                    _logger.LogWarning("[DppAI] Model file not found at {Path} — using keyword heuristics", modelPath);
                 }
-            }
-            else
-            {
-                _logger.LogWarning("[DppAI] Model file not found at {Path} — using keyword heuristics", _modelPath);
             }
         }
 
@@ -82,20 +87,22 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
 
             // 2. Fetch Exporter to get Public Key
             if (!Guid.TryParse(exporterId, out Guid exporterGuid))
-            {
                 throw new ArgumentException("Invalid Exporter ID");
-            }
 
-            var exporter = await _userRepository.GetByIdAsync(exporterGuid);
+            // Create a transient scope to resolve the scoped IUserRepository from this singleton
+            using var scope = _scopeFactory.CreateScope();
+            var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+
+            var exporter = await userRepository.GetByIdAsync(exporterGuid);
             if (exporter == null) throw new Exception("Exporter not found");
 
-            // Ensure Exporter has keys
+            // Ensure Exporter has RSA keys
             if (string.IsNullOrEmpty(exporter.PublicKey) || string.IsNullOrEmpty(exporter.PrivateKey))
             {
                 var keys = GenerateRsaKeys();
                 exporter.PublicKey = keys.PublicKey;
                 exporter.PrivateKey = keys.PrivateKey;
-                await _userRepository.UpdateAsync(exporter);
+                await userRepository.UpdateAsync(exporter);
             }
 
             // 3. Generate Ephemeral AES Key for this file
@@ -137,10 +144,14 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
         {
             // 1. Fetch User (Accessor) to get Private Key
             if (!Guid.TryParse(accessorId, out Guid accessorGuid)) throw new ArgumentException("Invalid User ID");
-            
-            var accessor = await _userRepository.GetByIdAsync(accessorGuid);
+
+            // Create a transient scope to resolve the scoped IUserRepository from this singleton
+            using var scope = _scopeFactory.CreateScope();
+            var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+
+            var accessor = await userRepository.GetByIdAsync(accessorGuid);
             if (accessor == null) throw new Exception("User not found");
-            
+
             if (string.IsNullOrEmpty(accessor.PrivateKey)) throw new Exception("User has no decryption keys established.");
 
             // 2. Parse Metadata

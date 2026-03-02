@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Modules.Marketplace.Models;
+using RubberIntelligence.API.Modules.Marketplace.Services;
 using RubberIntelligence.API.Modules.Dpp.Services;
 using System.Security.Claims;
 
@@ -15,20 +16,23 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         private readonly IUserRepository _userRepository;
         private readonly OnnxDppService _onnxDppService;
         private readonly GeminiOcrService _geminiOcrService;
+        private readonly BuyerHistoryService _buyerHistoryService;
         private readonly IWebHostEnvironment _env;
 
         public MarketplaceController(
-            IMarketplaceRepository marketplaceRepository, 
+            IMarketplaceRepository marketplaceRepository,
             IUserRepository userRepository,
             OnnxDppService onnxDppService,
             GeminiOcrService geminiOcrService,
+            BuyerHistoryService buyerHistoryService,
             IWebHostEnvironment env)
         {
             _marketplaceRepository = marketplaceRepository;
-            _userRepository = userRepository;
-            _onnxDppService = onnxDppService;
-            _geminiOcrService = geminiOcrService;
-            _env = env;
+            _userRepository        = userRepository;
+            _onnxDppService        = onnxDppService;
+            _geminiOcrService      = geminiOcrService;
+            _buyerHistoryService   = buyerHistoryService;
+            _env                   = env;
         }
 
         // ==========================================
@@ -208,6 +212,26 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             await _marketplaceRepository.UpdateTransactionAsync(transaction);
 
             return Ok(new { Message = "Invoice uploaded and secured successfully", Classification = classification });
+        }
+
+        // ── GET /api/marketplace/buyer-history/{buyerId} ─────────────────
+        /// <summary>
+        /// Returns an exporter-facing summary of the buyer's trading history.
+        /// Includes lot counts, quality averages, and DPP verification consistency.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("buyer-history/{buyerId}")]
+        public async Task<IActionResult> GetBuyerHistory(string buyerId)
+        {
+            try
+            {
+                var history = await _buyerHistoryService.GetBuyerHistory(buyerId);
+                return Ok(history);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to retrieve buyer history", details = ex.Message });
+            }
         }
 
         [Authorize(Roles = "Exporter")]
