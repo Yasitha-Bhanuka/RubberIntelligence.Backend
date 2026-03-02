@@ -38,6 +38,13 @@ namespace RubberIntelligence.API.Domain.Entities
         [BsonElement("createdAt")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        // Exporter Profile Context
+        [BsonElement("country")]
+        public string? Country { get; set; }
+
+        [BsonElement("organizationType")]
+        public string? OrganizationType { get; set; }
+
         // Security Keys for DPP Encryption
         [BsonElement("publicKey")]
         public string? PublicKey { get; set; }
