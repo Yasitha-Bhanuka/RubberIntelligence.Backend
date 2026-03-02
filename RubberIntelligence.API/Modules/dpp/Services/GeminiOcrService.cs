@@ -82,6 +82,14 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 var geminiResponse = JsonSerializer.Deserialize<GeminiResponse>(responseJson);
                 var rawText = geminiResponse?.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? "";
 
+                // Always log the raw Gemini response to aid debugging
+                _logger.LogDebug("[GeminiOCR] Raw response text: {RawText}", rawText);
+
+                if (string.IsNullOrWhiteSpace(rawText))
+                    throw new InvalidOperationException(
+                        "Gemini returned an empty response. " +
+                        $"Full API response: {responseJson}");
+
                 return ParseJsonFields(rawText);
             }
             catch (Exception ex) when (ex is not HttpRequestException)
@@ -176,9 +184,10 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
             }
             catch (JsonException ex)
             {
-                _logger.LogWarning(ex, "Gemini returned invalid JSON. Raw response: {Raw}", rawText);
-                // Return empty dict instead of crashing — caller can decide what to do
-                return new Dictionary<string, string>();
+                _logger.LogError(ex, "[GeminiOCR] JSON parse failed. Raw Gemini text was: {Raw}", rawText);
+                // Throw so the controller surfaces this as a 500 with the raw text included
+                throw new InvalidOperationException(
+                    $"Gemini response could not be parsed as JSON. Raw text: {rawText}", ex);
             }
         }
 

@@ -10,7 +10,9 @@ namespace RubberIntelligence.API.Data
 
         public AppDbContext(IOptions<MongoDbSettings> mongoSettings)
         {
-            var client = new MongoClient(mongoSettings.Value.ConnectionString);
+            var settings = MongoClientSettings.FromConnectionString(mongoSettings.Value.ConnectionString);
+            settings.ServerSelectionTimeout = TimeSpan.FromSeconds(10);
+            var client = new MongoClient(settings);
             _database = client.GetDatabase(mongoSettings.Value.DatabaseName);
         }
 

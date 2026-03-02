@@ -82,12 +82,17 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGrad
 builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Services.ILatexQualityService, RubberIntelligence.API.Modules.RubberLatexQuality.Services.OnnxLatexQualityService>();
 
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldEncryptionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldConfidentialityService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppDocumentProcessingService>(); // Fix 2: clean architecture
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>(); // File-level AES encryption
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ConfidentialAccessService>(); // Controlled access decryption
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ExporterContextService>(); // Exporter profile context for buyers
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.MessageService>(); // Lot-linked secure messaging
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Marketplace.Services.BuyerHistoryService>(); // Buyer history analytics
+builder.Services.AddScoped<RubberIntelligence.API.Data.Repositories.IMessageRepository, RubberIntelligence.API.Data.Repositories.MessageRepository>(); // Message persistence
 
 // Register Infrastructure Services
 builder.Services.AddScoped<JwtTokenService>();
@@ -120,6 +125,38 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Global exception handler for MongoDB connectivity issues
+// Must be added early so it wraps the rest of the pipeline
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next(context);
+    }
+    catch (TimeoutException ex) when (ex.Message.Contains("selecting a server"))
+    {
+        context.Response.StatusCode = 503;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                error = "Database connection timed out.",
+                hint = "Check MongoDB Atlas: whitelist your IP in Network Access, and ensure the cluster is not paused."
+            }));
+    }
+    catch (MongoDB.Driver.MongoException ex)
+    {
+        context.Response.StatusCode = 503;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                error = "Database error. Please try again later.",
+                detail = ex.Message
+            }));
+    }
+});
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

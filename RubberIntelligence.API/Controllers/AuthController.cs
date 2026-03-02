@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using MongoDB.Driver.GeoJsonObjectModel;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Domain.Entities;
@@ -51,90 +52,112 @@ namespace RubberIntelligence.API.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
         {
-            var user = await _userRepository.GetByEmailAsync(loginDto.Email);
-            if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
+            try
             {
-                return Unauthorized("Invalid Credentials");
-            }
-
-            if (!user.IsApproved)
-            {
-                return Unauthorized("Your account is pending admin approval. Please contact an administrator.");
-            }
-
-            var token = _jwtTokenService.GenerateToken(user);
-
-            return Ok(new
-            {
-                Token = token,
-                User = new
+                var user = await _userRepository.GetByEmailAsync(loginDto.Email);
+                if (user == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, user.PasswordHash))
                 {
-                    Id = user.Id,
-                    Email = user.Email,
-                    Role = user.Role.ToString().ToLower(),
-                    Name = user.FullName,
-                    PlantationName = user.PlantationName,
-                    Latitude = user.Location?.Coordinates.Latitude,
-                    Longitude = user.Location?.Coordinates.Longitude
+                    return Unauthorized("Invalid Credentials");
                 }
-            });
+
+                if (!user.IsApproved)
+                {
+                    return Unauthorized("Your account is pending admin approval. Please contact an administrator.");
+                }
+
+                var token = _jwtTokenService.GenerateToken(user);
+
+                return Ok(new
+                {
+                    Token = token,
+                    User = new
+                    {
+                        Id = user.Id,
+                        Email = user.Email,
+                        Role = user.Role.ToString().ToLower(),
+                        Name = user.FullName,
+                        PlantationName = user.PlantationName,
+                        Latitude = user.Location?.Coordinates.Latitude,
+                        Longitude = user.Location?.Coordinates.Longitude
+                    }
+                });
+            }
+            catch (TimeoutException)
+            {
+                return StatusCode(503, new { error = "Database connection timed out. Please check MongoDB Atlas network access settings." });
+            }
+            catch (MongoException ex)
+            {
+                return StatusCode(503, new { error = "Database error.", detail = ex.Message });
+            }
         }
 
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
         {
-            // Check if email already exists
-            if (await _userRepository.ExistsAsync(registerDto.Email))
+            try
             {
-                return BadRequest("Email already registered");
-            }
-
-            // Parse role
-            if (!Enum.TryParse<UserRole>(registerDto.Role, ignoreCase: true, out var role))
-            {
-                return BadRequest("Invalid role. Valid roles: Farmer, Admin, Researcher, Buyer, Exporter");
-            }
-
-            // Build GeoJSON location if coordinates provided
-            GeoJsonPoint<GeoJson2DGeographicCoordinates>? location = null;
-            if (registerDto.Latitude.HasValue && registerDto.Longitude.HasValue)
-            {
-                location = new GeoJsonPoint<GeoJson2DGeographicCoordinates>(
-                    new GeoJson2DGeographicCoordinates(
-                        registerDto.Longitude.Value,
-                        registerDto.Latitude.Value));
-            }
-
-            // Create user with hashed password
-            var user = new User
-            {
-                Id = Guid.NewGuid(),
-                FullName = registerDto.FullName,
-                Email = registerDto.Email,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password),
-                Role = role,
-                PlantationName = registerDto.PlantationName,
-                Location = location,
-                IsApproved = false,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            await _userRepository.CreateUserAsync(user);
-
-            // Generate token and return
-            var token = _jwtTokenService.GenerateToken(user);
-
-            return Ok(new
-            {
-                Message = "Registration successful! Your account is pending admin approval.",
-                User = new
+                // Check if email already exists
+                if (await _userRepository.ExistsAsync(registerDto.Email))
                 {
-                    Id = user.Id,
-                    Email = user.Email,
-                    Role = user.Role.ToString().ToLower(),
-                    Name = user.FullName
+                    return BadRequest("Email already registered");
                 }
-            });
+
+                // Parse role
+                if (!Enum.TryParse<UserRole>(registerDto.Role, ignoreCase: true, out var role))
+                {
+                    return BadRequest("Invalid role. Valid roles: Farmer, Admin, Researcher, Buyer, Exporter");
+                }
+
+                // Build GeoJSON location if coordinates provided
+                GeoJsonPoint<GeoJson2DGeographicCoordinates>? location = null;
+                if (registerDto.Latitude.HasValue && registerDto.Longitude.HasValue)
+                {
+                    location = new GeoJsonPoint<GeoJson2DGeographicCoordinates>(
+                        new GeoJson2DGeographicCoordinates(
+                            registerDto.Longitude.Value,
+                            registerDto.Latitude.Value));
+                }
+
+                // Create user with hashed password
+                var user = new User
+                {
+                    Id = Guid.NewGuid(),
+                    FullName = registerDto.FullName,
+                    Email = registerDto.Email,
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password),
+                    Role = role,
+                    PlantationName = registerDto.PlantationName,
+                    Location = location,
+                    IsApproved = false,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await _userRepository.CreateUserAsync(user);
+
+                // Generate token and return
+                var token = _jwtTokenService.GenerateToken(user);
+
+                return Ok(new
+                {
+                    Message = "Registration successful! Your account is pending admin approval.",
+                    User = new
+                    {
+                        Id = user.Id,
+                        Email = user.Email,
+                        Role = user.Role.ToString().ToLower(),
+                        Name = user.FullName
+                    }
+                });
+            }
+            catch (TimeoutException)
+            {
+                return StatusCode(503, new { error = "Database connection timed out. Please check MongoDB Atlas network access settings." });
+            }
+            catch (MongoException ex)
+            {
+                return StatusCode(503, new { error = "Database error.", detail = ex.Message });
+            }
         }
 
         [HttpGet("me")]

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using RubberIntelligence.API.Data.Repositories;
+using RubberIntelligence.API.Modules.Dpp.DTOs;
 using RubberIntelligence.API.Modules.Dpp.Models;
 using System.Security.Cryptography;
 using System.Text;
@@ -63,6 +64,47 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
             await _repository.CreateDppAsync(dpp);
 
             return dpp;
+        }
+
+        /// <summary>
+        /// Verifies a stored DPP's SHA-256 hash by re-serializing the passport
+        /// with the same camelCase format used at generation time (DppHash cleared to "").
+        /// </summary>
+        public async Task<DppVerificationResponseDto> VerifyDppHash(string lotId)
+        {
+            var dpp = await _repository.GetDppByLotIdAsync(lotId)
+                ?? throw new KeyNotFoundException($"No DPP found for lot {lotId}.");
+
+            var storedHash = dpp.DppHash;
+
+            // Re-create the exact serialization state used when the hash was first computed.
+            // DppHash must be empty to reproduce the original JSON.
+            var snapshot = new DigitalProductPassport
+            {
+                Id                     = dpp.Id,
+                LotId                  = dpp.LotId,
+                RubberGrade            = dpp.RubberGrade,
+                Quantity               = dpp.Quantity,
+                DispatchDetails        = dpp.DispatchDetails,
+                ConfidentialDataExists = dpp.ConfidentialDataExists,
+                LifecycleState         = dpp.LifecycleState,
+                DppHash                = string.Empty,   // cleared — matches generation-time state
+                CreatedAt              = dpp.CreatedAt
+            };
+
+            var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+
+            var recalculated = ComputeSha256(json);
+
+            return new DppVerificationResponseDto
+            {
+                IsValid           = string.Equals(storedHash, recalculated, StringComparison.OrdinalIgnoreCase),
+                RecalculatedHash  = recalculated,
+                StoredHash        = storedHash
+            };
         }
 
         // ── Private Helpers ──────────────────────────────────────────────
