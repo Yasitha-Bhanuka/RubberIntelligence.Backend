@@ -171,43 +171,44 @@ namespace RubberIntelligence.API.Modules.RubberLatexQuality.Services
 
         private (string Grade, string Status) DetermineQualityRules(double temp, double turbidity, double ph)
         {
-            // Excellent quality
-            // temperature 27 <= temp <= 32, turbidity -4500 <= NTU <= -3500, pH 6.5 <= pH <= 7.2
-            if (temp >= 27 && temp <= 32 && turbidity >= -4500 && turbidity <= -3500 && ph >= 6.5 && ph <= 7.2)
+            // First check if ANY parameter is Poor
+            bool tempPoor = temp < 20 || temp > 32; 
+            bool turbPoor = turbidity > -1500;
+            bool phPoor = ph < 5.2 || ph > 7.2;
+
+            if (tempPoor || turbPoor || phPoor)
+            {
+                return ("Poor Quality", "Fail");
+            }
+
+            // Check if ALL are Excellent
+            bool tempExc = temp >= 26 && temp <= 32;
+            bool turbExc = turbidity <= -5500;
+            bool phExc = ph >= 6.9 && ph <= 7.2;
+
+            if (tempExc && turbExc && phExc)
             {
                 return ("Excellent Quality", "Pass");
             }
 
-            // Good quality
-            // temperature 24 <= temp < 27, turbidity -3500 < NTU <= -2500, pH 5.8 <= pH < 6.5
-            if (temp >= 24 && temp < 27 && turbidity > -3500 && turbidity <= -2500 && ph >= 5.8 && ph < 6.5)
+            // Check if ALL are at least Good
+            bool tempGood = temp >= 24 && temp <= 32;
+            bool turbGood = turbidity <= -2500;
+            bool phGood = ph >= 5.8 && ph <= 7.2;
+
+            if (tempGood && turbGood && phGood)
             {
                 return ("Good Quality", "Pass");
             }
 
-            // Average quality
-            // temperature 20 <= temp < 24, turbidity -2500 < NTU <= -1500, pH 5.2 <= pH < 5.8
-            if (temp >= 20 && temp < 24 && turbidity > -2500 && turbidity <= -1500 && ph >= 5.2 && ph < 5.8)
+            // Check if ALL are at least Average
+            bool tempAvg = temp >= 20 && temp <= 32;
+            bool turbAvg = turbidity <= -1500;
+            bool phAvg = ph >= 5.2 && ph <= 7.2;
+
+            if (tempAvg && turbAvg && phAvg)
             {
                 return ("Average Quality", "Warning");
-            }
-
-            // Poor quality
-            // temperature 15 <= temp < 20 & temperature 32 < temp <= 45
-            // turbidity -1500 < NTU <= 3500
-            // pH 4.0 <= pH < 5.2 & pH 7.2 < pH <= 9.9
-            bool tempPoor = (temp >= 15 && temp < 20) || (temp > 32 && temp <= 45);
-            bool turbPoor = (turbidity > -1500 && turbidity <= 3500);
-            bool phPoor = (ph >= 4.0 && ph < 5.2) || (ph > 7.2 && ph <= 9.9);
-
-            // The user threw all these conditions under "Poor quality". 
-            // It assumes if ANY of these match? Or ALL? 
-            // The prompt "Poor quality (condition1, condition2, condition3)" usually implies AND for the set of attributes defining the state.
-            // BUT given the structure, if it fails the above, it's likely Poor.
-            // However, strictly following the ranges:
-            if (tempPoor || turbPoor || phPoor) 
-            {
-                return ("Poor Quality", "Fail");
             }
 
             // Fallback
