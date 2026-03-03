@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Modules.Marketplace.Models;
 using RubberIntelligence.API.Modules.Marketplace.Services;
+using RubberIntelligence.API.Modules.Marketplace.DTOs;
 using RubberIntelligence.API.Modules.Dpp.Services;
 using RubberIntelligence.API.Modules.Dpp.DTOs;
 using System.Security.Claims;
@@ -21,6 +22,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         private readonly DppDocumentProcessingService _processingService;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<MarketplaceController> _logger;
+        private readonly IDppRepository _dppRepository;
+        private readonly FieldEncryptionService _fieldEncryptionService;
 
         public MarketplaceController(
             IMarketplaceRepository marketplaceRepository,
@@ -30,16 +33,20 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             BuyerHistoryService buyerHistoryService,
             DppDocumentProcessingService processingService,
             IWebHostEnvironment env,
-            ILogger<MarketplaceController> logger)
+            ILogger<MarketplaceController> logger,
+            IDppRepository dppRepository,
+            FieldEncryptionService fieldEncryptionService)
         {
-            _marketplaceRepository = marketplaceRepository;
-            _userRepository        = userRepository;
-            _onnxDppService        = onnxDppService;
-            _geminiOcrService      = geminiOcrService;
-            _buyerHistoryService   = buyerHistoryService;
-            _processingService     = processingService;
-            _env                   = env;
-            _logger                = logger;
+            _marketplaceRepository  = marketplaceRepository;
+            _userRepository         = userRepository;
+            _onnxDppService         = onnxDppService;
+            _geminiOcrService       = geminiOcrService;
+            _buyerHistoryService    = buyerHistoryService;
+            _processingService      = processingService;
+            _env                    = env;
+            _logger                 = logger;
+            _dppRepository          = dppRepository;
+            _fieldEncryptionService = fieldEncryptionService;
         }
 
         // ==========================================
@@ -300,6 +307,70 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = "Failed to retrieve buyer history", details = ex.Message });
+            }
+        }
+
+        // ── GET /api/Marketplace/transactions/{id}/invoice-fields ────────────
+        /// <summary>
+        /// Returns the extracted invoice fields for a transaction, decrypting
+        /// confidential values on demand. Only the Buyer who owns the transaction
+        /// may call this endpoint.
+        /// </summary>
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpGet("transactions/{id}/invoice-fields")]
+        public async Task<IActionResult> GetInvoiceFields(string id)
+        {
+            var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(currentUserId)) return Unauthorized();
+
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null) return NotFound("Transaction not found.");
+
+            // Ownership check: only the buyer who uploaded the invoice may read fields
+            if (transaction.BuyerId != currentUserId)
+                return StatusCode(403, new { error = "Access denied: only the invoice owner may view extracted fields." });
+
+            if (transaction.InvoiceFields == null || transaction.InvoiceFields.Count == 0)
+                return NotFound(new { error = "No extracted fields found for this invoice." });
+
+            try
+            {
+                var storedFields = await _dppRepository.GetExtractedFieldsByLotIdAsync(id);
+                if (storedFields.Count == 0)
+                    return NotFound(new { error = "Invoice field records have not been stored for this transaction." });
+
+                var result = storedFields.Select(f =>
+                {
+                    string? plainValue;
+                    if (f.IsConfidential && !string.IsNullOrEmpty(f.IV))
+                    {
+                        try   { plainValue = _fieldEncryptionService.Decrypt(f.EncryptedValue, f.IV); }
+                        catch { plainValue = null; } // Decryption failure — surface as null, never log the value
+                    }
+                    else
+                    {
+                        // Non-confidential fields are stored as plaintext in EncryptedValue
+                        plainValue = string.IsNullOrEmpty(f.EncryptedValue) ? null : f.EncryptedValue;
+                    }
+
+                    return new InvoiceFieldDecryptedDto
+                    {
+                        FieldName      = f.FieldName,
+                        Value          = plainValue,
+                        IsConfidential = f.IsConfidential
+                    };
+                })
+                // Public fields first, then confidential
+                .OrderBy(f => f.IsConfidential ? 1 : 0)
+                .ThenBy(f => f.FieldName)
+                .ToList();
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to decrypt invoice fields for transaction {TransactionId}", id);
+                return StatusCode(500, new { error = "Unable to retrieve invoice fields. Please try again." });
             }
         }
 
