@@ -7,8 +7,10 @@
 # ---------------------------------------------------------
 
 # 1. Install tf2onnx (This works on a clean runtime)
+# Pin onnx to <=1.16 so the saved model uses IR version <=10,
+# which is the max supported by Microsoft.ML.OnnxRuntime 1.20.x.
 import os
-os.system('pip install -U tf2onnx onnx')
+os.system('pip install -U tf2onnx "onnx==1.16.0"')
 
 import tensorflow as tf
 import tf2onnx
