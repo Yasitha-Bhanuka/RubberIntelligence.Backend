@@ -61,6 +61,13 @@ namespace RubberIntelligence.API.Data.Repositories
             await _accessRequestCollection.UpdateOneAsync(x => x.Id == requestId, update);
         }
 
+        public async Task RejectAccessRequestAsync(string requestId)
+        {
+            var update = Builders<AccessRequest>.Update
+                .Set(x => x.Status, AccessRequestStatus.Rejected);
+            await _accessRequestCollection.UpdateOneAsync(x => x.Id == requestId, update);
+        }
+
         public async Task<AccessRequest?> GetApprovedRequestForLotAndExporterAsync(string lotId, string exporterId)
             => await _accessRequestCollection
                 .Find(x => x.LotId == lotId
@@ -71,6 +78,12 @@ namespace RubberIntelligence.API.Data.Repositories
         public async Task<List<AccessRequest>> GetPendingRequestsForBuyerAsync(string buyerId)
             => await _accessRequestCollection
                 .Find(x => x.BuyerId == buyerId && x.Status == AccessRequestStatus.Pending)
+                .SortByDescending(x => x.RequestedAt)
+                .ToListAsync();
+
+        public async Task<List<AccessRequest>> GetAccessRequestsByExporterIdAsync(string exporterId)
+            => await _accessRequestCollection
+                .Find(x => x.ExporterId == exporterId)
                 .SortByDescending(x => x.RequestedAt)
                 .ToListAsync();
     }

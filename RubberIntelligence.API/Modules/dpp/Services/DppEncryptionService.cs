@@ -1,50 +1,55 @@
 using System.Security.Cryptography;
 using System.Text;
+using RubberIntelligence.API.Infrastructure.Security;
 
 namespace RubberIntelligence.API.Modules.Dpp.Services
 {
     /// <summary>
     /// AES-256-CBC file-level encryption service.
-    /// Generates a random 16-byte IV per encryption, prepended to the ciphertext.
-    /// Decryption reads the IV from the first 16 bytes of the file automatically.
+    ///
+    /// KEY MANAGEMENT
+    /// ──────────────
+    /// Key is sourced exclusively from <see cref="EncryptionKeyProvider"/>.
+    /// No hardcoded fallback key is present in this class.
+    ///
+    /// IV INTEGRITY
+    /// ────────────
+    /// A fresh 16-byte IV is generated via <see cref="RandomNumberGenerator.GetBytes"/>
+    /// (CSPRNG) for every file encryption call.  The IV is prepended to the output
+    /// file as the first 16 bytes so decryption recovers it without any extra storage.
     /// </summary>
     public class DppEncryptionService
     {
+        private const int IvSizeBytes = 16; // AES block size
         private readonly byte[] _key;
 
-        public DppEncryptionService(IConfiguration config)
+        public DppEncryptionService(EncryptionKeyProvider keyProvider)
         {
-            // Prefer environment variable; fallback to appsettings; fallback to default dev key
-            var keyString = Environment.GetEnvironmentVariable("DPP_ENCRYPTION_KEY")
-                            ?? config["Dpp:EncryptionKey"]
-                            ?? "RubberIntelligenceDppSecretKey!3"; // 32 chars = 256 bits
-
-            _key = Encoding.UTF8.GetBytes(keyString);
-
-            if (_key.Length != 32)
-                throw new InvalidOperationException(
-                    "DPP_ENCRYPTION_KEY must be exactly 32 characters (256-bit AES key).");
+            _key = keyProvider.GetFileAesKey();
         }
 
         /// <summary>
-        /// Encrypts a file using AES-256-CBC with a random IV.
-        /// The IV (16 bytes) is prepended to the output file — no need to store it separately.
+        /// Encrypts a file using AES-256-CBC.
+        /// The IV (16 bytes, CSPRNG) is prepended to the output file.
         /// </summary>
         public async Task<string> EncryptFileAsync(IFormFile file, string outputPath)
         {
+            // CSPRNG-backed IV — guaranteed unique per file
+            var iv = RandomNumberGenerator.GetBytes(IvSizeBytes);
+
             using var aes = Aes.Create();
-            aes.Key = _key;
-            aes.Mode = CipherMode.CBC;
+            aes.Key     = _key;
+            aes.IV      = iv;
+            aes.Mode    = CipherMode.CBC;
             aes.Padding = PaddingMode.PKCS7;
-            aes.GenerateIV(); // Cryptographically random IV — different every call
 
             using var outputStream = new FileStream(outputPath, FileMode.Create);
 
-            // Write IV as the first 16 bytes of the file
-            await outputStream.WriteAsync(aes.IV, 0, aes.IV.Length);
+            // Prepend IV as the first 16 bytes — decryption reads it back automatically
+            await outputStream.WriteAsync(iv, 0, iv.Length);
 
             using var cryptoStream = new CryptoStream(outputStream, aes.CreateEncryptor(), CryptoStreamMode.Write);
-            using var inputStream = file.OpenReadStream();
+            using var inputStream  = file.OpenReadStream();
             await inputStream.CopyToAsync(cryptoStream);
 
             return outputPath;
@@ -61,16 +66,16 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
 
             using var fileStream = new FileStream(inputPath, FileMode.Open, FileAccess.Read);
 
-            // Recover IV from the first 16 bytes
-            var iv = new byte[16];
-            var bytesRead = await fileStream.ReadAsync(iv, 0, iv.Length);
-            if (bytesRead < 16)
-                throw new InvalidDataException("File too short — IV header missing or file is corrupt.");
+            var iv         = new byte[IvSizeBytes];
+            var bytesRead  = await fileStream.ReadAsync(iv, 0, iv.Length);
+            if (bytesRead < IvSizeBytes)
+                throw new InvalidDataException(
+                    "File too short — IV header missing or file is corrupt.");
 
             using var aes = Aes.Create();
-            aes.Key = _key;
-            aes.IV = iv;
-            aes.Mode = CipherMode.CBC;
+            aes.Key     = _key;
+            aes.IV      = iv;
+            aes.Mode    = CipherMode.CBC;
             aes.Padding = PaddingMode.PKCS7;
 
             var memoryStream = new MemoryStream();
