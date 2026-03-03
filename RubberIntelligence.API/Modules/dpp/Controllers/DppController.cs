@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Modules.Dpp.DTOs;
 using RubberIntelligence.API.Modules.Dpp.Models;
@@ -105,9 +106,30 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
 
             var classificationResult = _onnxDppService.ClassifyDocument(extractedText, request.File.FileName);
 
-            // 4. Save DppDocument record
+            // 4. Pre-generate the document ID so ProcessFields can reference it before DppDocument is persisted.
+            //    This lets us build a safe ExtractedTextSummary from public fields ONLY before writing to MongoDB.
+            var docId = ObjectId.GenerateNewId().ToString();
+
+            // 5. Per-field: classify → encrypt (if confidential) — run BEFORE saving DppDocument.
+            //    CONSTRAINT: ExtractedTextSummary must never hold confidential plaintext (Constraint §7).
+            var fieldRecords = _processingService.ProcessFields(extractedFields, docId);
+
+            // Build safe summary from NON-CONFIDENTIAL fields only.
+            // For public fields, EncryptedValue stores the raw extracted text (no encryption applied).
+            // For confidential fields, EncryptedValue is the AES-256 ciphertext — never included here.
+            var safeSummaryParts = fieldRecords
+                .Where(f => !f.IsConfidential && !string.IsNullOrWhiteSpace(f.EncryptedValue))
+                .Select(f => f.EncryptedValue);
+            var rawSafeSummary = string.Join(" ", safeSummaryParts).Trim();
+            var safeSummary = rawSafeSummary.Length > 120
+                ? rawSafeSummary[..120] + "\u2026"
+                : rawSafeSummary;
+
+            // 6. Save DppDocument with pre-generated Id and public-only summary.
+            //    Confidential field values are structurally absent from this record.
             var dppDoc = new DppDocument
             {
+                Id                   = docId,
                 OriginalFileName     = request.File.FileName,
                 StoredFilePath       = tempPath,
                 ContentType          = request.File.ContentType,
@@ -115,16 +137,14 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 ConfidenceScore      = classificationResult.ConfidenceScore,
                 UploadedAt           = DateTime.UtcNow,
                 UploadedBy           = userId,
-                ExtractedTextSummary = classificationResult.ExtractedText,
+                // SAFE: only non-confidential field values — confidential plaintext never stored here
+                ExtractedTextSummary = string.IsNullOrWhiteSpace(safeSummary) ? null : safeSummary,
                 DetectedKeywords     = classificationResult.InfluentialKeywords
             };
 
             await _dppRepository.CreateAsync(dppDoc);
 
-            // 5. Per-field: classify → encrypt (if confidential) — delegated to processing service
-            var fieldRecords = _processingService.ProcessFields(extractedFields, dppDoc.Id);
-
-            // 6. Bulk-save ExtractedField records to MongoDB
+            // 7. Bulk-save ExtractedField records to MongoDB
             await _dppRepository.SaveExtractedFieldsAsync(fieldRecords);
 
             // Build safe extracted content: only non-confidential field values are exposed
@@ -292,6 +312,32 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
         }
 
         /// <summary>
+        /// Buyer rejects an exporter's access request.
+        /// Only the buyer who owns the DPP can reject.
+        /// </summary>
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpPost("reject-confidential/{requestId}")]
+        public async Task<IActionResult> RejectConfidentialAccess(string requestId)
+        {
+            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
+
+            var request = await _dppRepository.GetAccessRequestAsync(requestId);
+            if (request == null) return NotFound(new { error = "Access request not found." });
+
+            if (request.BuyerId != buyerId)
+                return Forbid();
+
+            if (request.Status != AccessRequestStatus.Pending)
+                return BadRequest(new { error = $"Request is already {request.Status}. Only PENDING requests can be rejected." });
+
+            await _dppRepository.RejectAccessRequestAsync(requestId);
+            _logger.LogInformation("[DPP] Buyer {BuyerId} rejected confidential access request {RequestId}", buyerId, requestId);
+
+            return Ok(new { requestId, status = AccessRequestStatus.Rejected });
+        }
+
+        /// <summary>
         /// Buyer fetches all PENDING access requests for their lots.
         /// </summary>
         [Authorize(Roles = "Buyer,Admin")]
@@ -309,6 +355,28 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 r.ExporterId,
                 r.Status,
                 r.RequestedAt
+            }));
+        }
+
+        /// <summary>
+        /// Exporter fetches all their own access requests (PENDING, APPROVED, REJECTED).
+        /// Allows the exporter dashboard to show real-time request statuses without polling the confidential endpoint.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("my-requests")]
+        public async Task<IActionResult> GetMyAccessRequests()
+        {
+            var exporterId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
+
+            var requests = await _dppRepository.GetAccessRequestsByExporterIdAsync(exporterId);
+            return Ok(requests.Select(r => new
+            {
+                r.Id,
+                r.LotId,
+                r.Status,
+                r.RequestedAt,
+                r.ApprovedAt
             }));
         }
 
@@ -336,8 +404,20 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             if (confidentialFields.Count == 0)
                 return Ok(new { message = "No confidential fields found for this lot.", fields = Array.Empty<object>() });
 
-            // 3. Delegate decryption to service layer — never decrypt in controller
-            var decryptedFields = _confidentialAccessService.DecryptFields(confidentialFields);
+            // 3. Delegate decryption to service layer — never decrypt in controller.
+            //    Pass the full AccessRequest so the service can double-verify status (defense-in-depth).
+            List<ConfidentialFieldDto> decryptedFields;
+            try
+            {
+                decryptedFields = _confidentialAccessService.DecryptFields(
+                    approvedRequest, exporterId!, confidentialFields);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // Service-layer gate blocked the call despite the DB check above
+                _logger.LogWarning("[DPP] Service-layer gate blocked decryption: {Msg}", ex.Message);
+                return StatusCode(403, new { error = ex.Message });
+            }
 
             // 4. Log access
             _logger.LogInformation(

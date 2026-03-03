@@ -83,14 +83,22 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Ser
 
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
+
+// ── Encryption infrastructure ─────────────────────────────────────────────
+builder.Services.Configure<EncryptionKeyOptions>(
+    builder.Configuration.GetSection(EncryptionKeyOptions.SectionName));
+// Singleton: key bytes are resolved once at startup and shared safely across requests
+builder.Services.AddSingleton<EncryptionKeyProvider>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.BlindIndexService>();
+// ──────────────────────────────────────────────────────────────
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldEncryptionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldConfidentialityService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppDocumentProcessingService>(); // Fix 2: clean architecture
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppDocumentProcessingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>(); // File-level AES encryption
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ConfidentialAccessService>(); // Controlled access decryption
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ExporterContextService>(); // Exporter profile context for buyers
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.MessageService>(); // Lot-linked secure messaging
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ConfidentialAccessService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ExporterContextService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.MessageService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Marketplace.Services.BuyerHistoryService>(); // Buyer history analytics
 builder.Services.AddScoped<RubberIntelligence.API.Data.Repositories.IMessageRepository, RubberIntelligence.API.Data.Repositories.MessageRepository>(); // Message persistence
 
@@ -165,7 +173,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// Only redirect to HTTPS in production — in development the mobile app hits plain HTTP
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseCors("AllowAll");
 
