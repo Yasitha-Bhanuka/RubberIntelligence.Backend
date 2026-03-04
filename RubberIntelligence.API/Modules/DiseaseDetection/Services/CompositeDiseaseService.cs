@@ -40,19 +40,42 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             }
 
             // 2. Route to correct AI service based on type
+            PredictionResponse result;
             if (request.Type == DiseaseType.Pest)
             {
-                return await _pestService.PredictAsync(request);
+                result = await _pestService.PredictAsync(request);
             }
             else if (request.Type == DiseaseType.Weed)
             {
-                return await _weedService.PredictAsync(request);
+                result = await _weedService.PredictAsync(request);
             }
-            // Default to Leaf Disease
-            else
+            else // Default to Leaf Disease
             {
-                return await _leafService.PredictAsync(request);
+                result = await _leafService.PredictAsync(request);
             }
+
+            // 3. Restrict output to trained classes (centralized in AllowedClasses.cs)
+            //    If the API label does not match a trained class, mark as rejected.
+            //    This also prevents proximity alerts from firing (DiseaseController
+            //    checks IsRejected before calling AlertService).
+            var mappedLabel = AllowedClasses.MapLabel(result.Label, request.Type);
+            if (mappedLabel == null)
+            {
+                return new PredictionResponse
+                {
+                    Label = "Unidentified",
+                    Confidence = result.Confidence,
+                    Severity = "N/A",
+                    Remedy = $"The detected condition '{result.Label}' is outside the trained model boundary. " +
+                             "Please capture a clearer image or consult an agricultural expert.",
+                    IsRejected = true,
+                    RejectionReason = $"'{result.Label}' does not match any trained class for {request.Type} detection."
+                };
+            }
+
+            // Apply the mapped (normalized) label
+            result.Label = mappedLabel;
+            return result;
         }
     }
 }
