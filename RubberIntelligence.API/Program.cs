@@ -80,6 +80,8 @@ builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.PriceForecasting.Services.IPriceForecastingService, RubberIntelligence.API.Modules.PriceForecasting.Services.OnnxPriceForecastingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGradingService, RubberIntelligence.API.Modules.Grading.Services.OnnxGradingService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Services.ILatexQualityService, RubberIntelligence.API.Modules.RubberLatexQuality.Services.OnnxLatexQualityService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Bidding.Services.IBiddingRepository, RubberIntelligence.API.Modules.Bidding.Services.BiddingRepository>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Bidding.Services.IBiddingService, RubberIntelligence.API.Modules.Bidding.Services.BiddingService>();
 
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
