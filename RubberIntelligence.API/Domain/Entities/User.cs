@@ -5,6 +5,7 @@ using RubberIntelligence.API.Domain.Enums;
 
 namespace RubberIntelligence.API.Domain.Entities
 {
+    [BsonIgnoreExtraElements]
     public class User
     {
         [BsonId]
