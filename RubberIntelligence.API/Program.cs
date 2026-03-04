@@ -82,8 +82,25 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGrad
 builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Services.ILatexQualityService, RubberIntelligence.API.Modules.RubberLatexQuality.Services.OnnxLatexQualityService>();
 
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
+
+// ── Encryption infrastructure ─────────────────────────────────────────────
+builder.Services.Configure<EncryptionKeyOptions>(
+    builder.Configuration.GetSection(EncryptionKeyOptions.SectionName));
+// Singleton: key bytes are resolved once at startup and shared safely across requests
+builder.Services.AddSingleton<EncryptionKeyProvider>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.BlindIndexService>();
+// ──────────────────────────────────────────────────────────────
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldEncryptionService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.FieldConfidentialityService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppDocumentProcessingService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ConfidentialAccessService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ExporterContextService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.MessageService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Marketplace.Services.BuyerHistoryService>(); // Buyer history analytics
+builder.Services.AddScoped<RubberIntelligence.API.Data.Repositories.IMessageRepository, RubberIntelligence.API.Data.Repositories.MessageRepository>(); // Message persistence
 
 // Register Infrastructure Services
 builder.Services.AddScoped<JwtTokenService>();
@@ -117,6 +134,38 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Global exception handler for MongoDB connectivity issues
+// Must be added early so it wraps the rest of the pipeline
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next(context);
+    }
+    catch (TimeoutException ex) when (ex.Message.Contains("selecting a server"))
+    {
+        context.Response.StatusCode = 503;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                error = "Database connection timed out.",
+                hint = "Check MongoDB Atlas: whitelist your IP in Network Access, and ensure the cluster is not paused."
+            }));
+    }
+    catch (MongoDB.Driver.MongoException ex)
+    {
+        context.Response.StatusCode = 503;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                error = "Database error. Please try again later.",
+                detail = ex.Message
+            }));
+    }
+});
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -124,7 +173,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// Only redirect to HTTPS in production — in development the mobile app hits plain HTTP
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseCors("AllowAll");
 
@@ -134,13 +187,23 @@ app.UseAuthorization();
 app.MapControllers();
 
 // Ensure geospatial indexes + Seed Database
+// Wrapped in try-catch: a MongoDB timeout must not crash the whole app
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await dbContext.EnsureIndexesAsync();
+    try
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.EnsureIndexesAsync();
 
-    var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
-    await seeder.SeedAsync();
+        var seeder = scope.ServiceProvider.GetRequiredService<DbSeeder>();
+        await seeder.SeedAsync();
+    }
+    catch (Exception ex)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning(ex, "⚠️  MongoDB startup tasks failed (indexes/seed). " +
+            "Check your Atlas IP whitelist or network. The API will still start.");
+    }
 }
 
 app.Run();

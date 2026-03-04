@@ -2,7 +2,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Modules.Marketplace.Models;
+using RubberIntelligence.API.Modules.Marketplace.Services;
+using RubberIntelligence.API.Modules.Marketplace.DTOs;
 using RubberIntelligence.API.Modules.Dpp.Services;
+using RubberIntelligence.API.Modules.Dpp.DTOs;
 using System.Security.Claims;
 
 namespace RubberIntelligence.API.Modules.Marketplace.Controllers
@@ -15,20 +18,35 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         private readonly IUserRepository _userRepository;
         private readonly OnnxDppService _onnxDppService;
         private readonly GeminiOcrService _geminiOcrService;
+        private readonly BuyerHistoryService _buyerHistoryService;
+        private readonly DppDocumentProcessingService _processingService;
         private readonly IWebHostEnvironment _env;
+        private readonly ILogger<MarketplaceController> _logger;
+        private readonly IDppRepository _dppRepository;
+        private readonly FieldEncryptionService _fieldEncryptionService;
 
         public MarketplaceController(
-            IMarketplaceRepository marketplaceRepository, 
+            IMarketplaceRepository marketplaceRepository,
             IUserRepository userRepository,
             OnnxDppService onnxDppService,
             GeminiOcrService geminiOcrService,
-            IWebHostEnvironment env)
+            BuyerHistoryService buyerHistoryService,
+            DppDocumentProcessingService processingService,
+            IWebHostEnvironment env,
+            ILogger<MarketplaceController> logger,
+            IDppRepository dppRepository,
+            FieldEncryptionService fieldEncryptionService)
         {
-            _marketplaceRepository = marketplaceRepository;
-            _userRepository = userRepository;
-            _onnxDppService = onnxDppService;
-            _geminiOcrService = geminiOcrService;
-            _env = env;
+            _marketplaceRepository  = marketplaceRepository;
+            _userRepository         = userRepository;
+            _onnxDppService         = onnxDppService;
+            _geminiOcrService       = geminiOcrService;
+            _buyerHistoryService    = buyerHistoryService;
+            _processingService      = processingService;
+            _env                    = env;
+            _logger                 = logger;
+            _dppRepository          = dppRepository;
+            _fieldEncryptionService = fieldEncryptionService;
         }
 
         // ==========================================
@@ -167,47 +185,193 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         public async Task<IActionResult> UploadInvoice(string id, IFormFile file)
         {
             var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            
-            // 1. Validate Transaction
+
+            // 1. Validate file
+            if (file == null || file.Length == 0)
+                return BadRequest(new { error = "No file uploaded." });
+
+            // 2. Validate transaction ownership
             var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
-            if (transaction == null) return NotFound("Transaction not found");
-            if (transaction.BuyerId != buyerId) return StatusCode(403, "You are not the seller/buyer for this transaction");
-            
-            // 2. Validate Status
-            // Allow re-upload if needed, or strictly PendingInvoice
-            // if (transaction.Status != "PendingInvoice") return BadRequest("Invoice not required or already processed");
+            if (transaction == null) return NotFound(new { error = "Transaction not found." });
+            if (transaction.BuyerId != buyerId) return StatusCode(403, new { error = "Access denied." });
 
-            if (file == null || file.Length == 0) return BadRequest("No file uploaded");
-
-            // 3. Extract Text (OCR)
-            using var stream = file.OpenReadStream();
-            string extractedText = "";
-            try {
-                extractedText = await _geminiOcrService.ExtractTextAsync(stream, file.ContentType);
-            } catch (Exception ex) {
-                // Determine fallback or failure. For now, log and proceed with empty text if allowed, or fail.
-                // Depending on requirements. Let's fail if OCR is critical for classification.
-                return StatusCode(500, "OCR Processing Failed: " + ex.Message);
+            // 3. Gemini structured extraction — invoice schema; File API used automatically for PDFs
+            Dictionary<string, string> extractedFields;
+            try
+            {
+                using var ocrStream = file.OpenReadStream();
+                extractedFields = await _geminiOcrService.ExtractInvoiceFieldsAsync(ocrStream, file.ContentType);
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                return StatusCode(429, new { error = "Gemini API quota exceeded. Please try again later." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Invoice] OCR failed for transaction {TransactionId}", id);
+                return StatusCode(500, new { error = "OCR processing failed. Check server logs." });
             }
 
-            // 4. Process & Encrypt
+            // 4. Per-field classify & encrypt — reuses the same DPP pipeline (AES-256-CBC + HMAC blind index)
+            var fieldRecords = _processingService.ProcessFields(extractedFields, id);
+
+            // Build safe display values (null for confidential — plaintext never stored)
+            var safeInvoiceFields = fieldRecords
+                .ToDictionary(
+                    f => f.FieldName,
+                    f => (string?)(f.IsConfidential ? null : f.EncryptedValue));
+
+            // Build plaintext for ONNX classifier using public values only
+            var classifyText = string.Join(" ", fieldRecords
+                .Where(f => !f.IsConfidential && !string.IsNullOrWhiteSpace(f.EncryptedValue))
+                .Select(f => f.EncryptedValue));
+
+            // 5. Classify document + AES/RSA-encrypt the raw file (existing invoice security pipeline)
             string storagePath = Path.Combine(_env.ContentRootPath, "App_Data", "SecureInvoices");
-            // Reset stream for encryption reading
-            using var fileStreamForEncryption = file.OpenReadStream();
-            
-            var (encryptedPath, classification, encryptionMetadata) = await _onnxDppService.ProcessAndSecureInvoiceAsync(
-                fileStreamForEncryption, file.FileName, extractedText, transaction.ExporterId, storagePath);
+            string encryptedPath, dppClassification, encryptionMetadata;
+            try
+            {
+                using var encStream = file.OpenReadStream();
+                (encryptedPath, dppClassification, encryptionMetadata) =
+                    await _onnxDppService.ProcessAndSecureInvoiceAsync(
+                        encStream, file.FileName, classifyText, transaction.ExporterId, storagePath);
+            }
+            finally
+            {
+                classifyText = string.Empty; // Eagerly clear — values may contain PII
+            }
 
-            // 5. Update Transaction
-            transaction.DppInvoicePath = encryptedPath;
-            transaction.DppClassification = classification;
+            // 6. Persist to MongoDB
+            transaction.DppInvoicePath     = encryptedPath;
+            transaction.DppClassification  = dppClassification;
             transaction.EncryptionMetadata = encryptionMetadata;
-            transaction.Status = "InvoiceUploaded"; // Transition state
-            transaction.LastUpdatedAt = DateTime.UtcNow;
-
+            transaction.InvoiceFields      = safeInvoiceFields;
+            transaction.Status             = "InvoiceUploaded";
+            transaction.LastUpdatedAt      = DateTime.UtcNow;
             await _marketplaceRepository.UpdateTransactionAsync(transaction);
 
-            return Ok(new { Message = "Invoice uploaded and secured successfully", Classification = classification });
+            // 7. Build classification summary from ONNX model
+            var classResult = _onnxDppService.ClassifyDocument(
+                string.Join(" ", safeInvoiceFields.Values.Where(v => v != null)),
+                file.FileName);
+
+            var publicCount      = fieldRecords.Count(f => !f.IsConfidential);
+            var confidentialCount = fieldRecords.Count(f => f.IsConfidential);
+
+            _logger.LogInformation(
+                "[Invoice] Processed transaction {TransactionId}: {Total} fields ({Public} public, {Confidential} encrypted), class={Class}",
+                id, fieldRecords.Count, publicCount, confidentialCount, dppClassification);
+
+            return Ok(new InvoiceUploadResponseDto
+            {
+                DppId           = id,
+                Message         = "Invoice uploaded and secured successfully.",
+                FieldsExtracted = fieldRecords.Count,
+                Fields = fieldRecords.Select(f => new InvoiceFieldSummaryDto
+                {
+                    FieldName       = f.FieldName,
+                    IsConfidential  = f.IsConfidential,
+                    ConfidenceScore = f.ConfidenceScore,
+                    HasValue        = !string.IsNullOrWhiteSpace(f.EncryptedValue),
+                    ExtractedValue  = f.IsConfidential ? null : f.EncryptedValue
+                }).ToList(),
+                Classification = new InvoiceClassificationDto
+                {
+                    Classification         = classResult.Classification,
+                    ConfidenceScore        = classResult.ConfidenceScore,
+                    ConfidenceLevel        = classResult.ConfidenceLevel,
+                    SystemAction           = classResult.SystemAction,
+                    Explanation            = classResult.Explanation,
+                    InfluentialKeywords    = classResult.InfluentialKeywords,
+                    GeminiExtractedCount   = fieldRecords.Count,
+                    PublicFieldCount       = publicCount,
+                    ConfidentialFieldCount = confidentialCount
+                }
+            });
+        }
+
+        // ── GET /api/marketplace/buyer-history/{buyerId} ─────────────────
+        /// <summary>
+        /// Returns an exporter-facing summary of the buyer's trading history.
+        /// Includes lot counts, quality averages, and DPP verification consistency.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("buyer-history/{buyerId}")]
+        public async Task<IActionResult> GetBuyerHistory(string buyerId)
+        {
+            try
+            {
+                var history = await _buyerHistoryService.GetBuyerHistory(buyerId);
+                return Ok(history);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to retrieve buyer history", details = ex.Message });
+            }
+        }
+
+        // ── GET /api/Marketplace/transactions/{id}/invoice-fields ────────────
+        /// <summary>
+        /// Returns the extracted invoice fields for a transaction, decrypting
+        /// confidential values on demand. Only the Buyer who owns the transaction
+        /// may call this endpoint.
+        /// </summary>
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpGet("transactions/{id}/invoice-fields")]
+        public async Task<IActionResult> GetInvoiceFields(string id)
+        {
+            var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(currentUserId)) return Unauthorized();
+
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null) return NotFound("Transaction not found.");
+
+            // Ownership check: only the buyer who uploaded the invoice may read fields
+            if (transaction.BuyerId != currentUserId)
+                return StatusCode(403, new { error = "Access denied: only the invoice owner may view extracted fields." });
+
+            if (transaction.InvoiceFields == null || transaction.InvoiceFields.Count == 0)
+                return NotFound(new { error = "No extracted fields found for this invoice." });
+
+            try
+            {
+                var storedFields = await _dppRepository.GetExtractedFieldsByLotIdAsync(id);
+                if (storedFields.Count == 0)
+                    return NotFound(new { error = "Invoice field records have not been stored for this transaction." });
+
+                var result = storedFields.Select(f =>
+                {
+                    string? plainValue;
+                    if (f.IsConfidential && !string.IsNullOrEmpty(f.IV))
+                    {
+                        try   { plainValue = _fieldEncryptionService.Decrypt(f.EncryptedValue, f.IV); }
+                        catch { plainValue = null; } // Decryption failure — surface as null, never log the value
+                    }
+                    else
+                    {
+                        // Non-confidential fields are stored as plaintext in EncryptedValue
+                        plainValue = string.IsNullOrEmpty(f.EncryptedValue) ? null : f.EncryptedValue;
+                    }
+
+                    return new InvoiceFieldDecryptedDto
+                    {
+                        FieldName      = f.FieldName,
+                        Value          = plainValue,
+                        IsConfidential = f.IsConfidential
+                    };
+                })
+                // Public fields first, then confidential
+                .OrderBy(f => f.IsConfidential ? 1 : 0)
+                .ThenBy(f => f.FieldName)
+                .ToList();
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to decrypt invoice fields for transaction {TransactionId}", id);
+                return StatusCode(500, new { error = "Unable to retrieve invoice fields. Please try again." });
+            }
         }
 
         [Authorize(Roles = "Exporter")]

@@ -38,6 +38,14 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
 
         [BsonElement("dppDocumentId")]
         public string? DppDocumentId { get; set; }
+
+        /// <summary>
+        /// Safe display fields extracted from the invoice by Gemini.
+        /// Confidential field values (e.g. totalAmount) are stored as null here;
+        /// their ciphertexts live in the DppDocumentProcessingService ExtractedField records.
+        /// </summary>
+        [BsonElement("invoiceFields")]
+        public Dictionary<string, string?>? InvoiceFields { get; set; }
     }
 
     public class TransactionMessage
