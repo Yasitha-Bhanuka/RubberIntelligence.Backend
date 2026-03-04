@@ -4,11 +4,14 @@ using System;
 
 namespace RubberIntelligence.API.Modules.Bidding.Models
 {
+    [BsonIgnoreExtraElements]
     public class Auction
     {
         [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
         public string? Id { get; set; }
+        
+        public string? MintTxHash { get; set; }
 
         public string Title { get; set; } = string.Empty;
         public string Subtitle { get; set; } = string.Empty;
