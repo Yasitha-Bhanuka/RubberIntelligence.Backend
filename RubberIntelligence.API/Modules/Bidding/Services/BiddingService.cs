@@ -153,6 +153,16 @@ namespace RubberIntelligence.API.Modules.Bidding.Services
             if (progress < 0) progress = 0;
             if (progress > 1) progress = 1;
 
+            var highestBidderName = auction.HighestBidderName;
+            if (auction.Status == "Closed" && auction.TotalBids == 0)
+            {
+                highestBidderName = "No Winner";
+            }
+            else if (string.IsNullOrEmpty(highestBidderName))
+            {
+                highestBidderName = "No bids yet";
+            }
+
             return new AuctionDto
             {
                 Id = auction.Id ?? string.Empty,
@@ -163,7 +173,7 @@ namespace RubberIntelligence.API.Modules.Bidding.Services
                 MinIncrement = auction.MinIncrement,
                 Quantity = $"{auction.QuantityKg:N0} kg",
                 Seller = auction.SellerName,
-                HighestBidder = auction.HighestBidderName ?? "No bids yet",
+                HighestBidder = highestBidderName,
                 TotalBids = auction.TotalBids,
                 TimeRemaining = timeRemainingStr.Replace("0d ", ""), // quick format cleanup
                 EndTime = auction.EndTime,
