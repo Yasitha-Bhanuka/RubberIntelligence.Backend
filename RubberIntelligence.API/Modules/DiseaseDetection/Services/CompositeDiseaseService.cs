@@ -69,7 +69,8 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                     Remedy = $"The detected condition '{result.Label}' is outside the trained model boundary. " +
                              "Please capture a clearer image or consult an agricultural expert.",
                     IsRejected = true,
-                    RejectionReason = $"'{result.Label}' does not match any trained class for {request.Type} detection."
+                    // RejectionReason = $"'{result.Label}' does not match any trained class for {request.Type} detection."
+                    RejectionReason = $"Does not match any trained class for detection."
                 };
             }
 
