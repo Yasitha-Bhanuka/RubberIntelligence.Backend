@@ -26,6 +26,8 @@ namespace RubberIntelligence.API.Modules.Bidding.DTOs
         
         public bool IsNftSecured { get; set; }
         public string? NftTokenId { get; set; }
+        public string? IpfsHash { get; set; }
+        public int? EsgScore { get; set; }
         public string? LotId { get; set; }
     }
 }
