@@ -285,6 +285,10 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             ("cabbage looper",        "Cabbage Looper"),
             ("trichoplusia",          "Cabbage Looper"),  // Trichoplusia ni
             ("looper",                "Cabbage Looper"),
+            ("phlogophora", "Cabbage Looper"),
+            ("alsophila", "Cabbage Looper"),
+            ("jodis", "Cabbage Looper"),
+            ("hadena", "Cabbage Looper"),
             ("plusiinae",             "Cabbage Looper"),   // Subfamily
             ("caterpillar",           "Cabbage Looper"),  // caterpillar fallback
             ("larva",                 "Cabbage Looper"),  // larva fallback
@@ -326,34 +330,34 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             ("homalodisca",           "Cicadellidae"),
 
             // ── Aphids ──
-            ("aphid",                 "Aphids"),
-            ("aphis",                 "Aphids"),
-            ("aphididae",             "Aphids"),          // Aphid family
-            ("myzus",                 "Aphids"),          // Green peach aphid
-            ("rhopalosiphum",         "Aphids"),          // Bird cherry-oat aphid
-            ("macrosiphum",           "Aphids"),          // Potato aphid
-            ("brevicoryne",           "Aphids"),          // Cabbage aphid
-            ("sitobion",              "Aphids"),          // Grain aphid
-            ("schizaphis",            "Aphids"),
-            ("toxoptera",             "Aphids"),          // Black citrus aphid
-            ("greenfly",              "Aphids"),          // Common UK name
-            ("blackfly",              "Aphids"),          // Common UK name (bean aphid)
-            ("plant lice",            "Aphids"),          // Old common name
-            ("plant louse",           "Aphids"),
-            ("woolly aphid",          "Aphids"),
-            ("eriosoma",              "Aphids"),          // Woolly apple aphid
+            // ("aphid",                 "Aphids"),
+            // ("aphis",                 "Aphids"),
+            // ("aphididae",             "Aphids"),          // Aphid family
+            // ("myzus",                 "Aphids"),          // Green peach aphid
+            // ("rhopalosiphum",         "Aphids"),          // Bird cherry-oat aphid
+            // ("macrosiphum",           "Aphids"),          // Potato aphid
+            // ("brevicoryne",           "Aphids"),          // Cabbage aphid
+            // ("sitobion",              "Aphids"),          // Grain aphid
+            // ("schizaphis",            "Aphids"),
+            // ("toxoptera",             "Aphids"),          // Black citrus aphid
+            // ("greenfly",              "Aphids"),          // Common UK name
+            // ("blackfly",              "Aphids"),          // Common UK name (bean aphid)
+            // ("plant lice",            "Aphids"),          // Old common name
+            // ("plant louse",           "Aphids"),
+            // ("woolly aphid",          "Aphids"),
+            // ("eriosoma",              "Aphids"),          // Woolly apple aphid
 
-            // ── Bugs (general fallback — keep last) ──
-            ("bug",                   "Bugs"),            // general "bug" fallback — last
-            ("hemiptera",             "Bugs"),            // True bugs order
-            ("heteroptera",           "Bugs"),            // Suborder of true bugs
-            ("lygus",                 "Bugs"),            // Tarnished plant bug
-            ("miridae",              "Bugs"),             // Plant bug family
-            ("coreidae",              "Bugs"),            // Leaf-footed bugs
-            ("leptoglossus",          "Bugs"),
-            ("reduviidae",            "Bugs"),            // Assassin bugs
-            ("tingidae",              "Bugs"),            // Lace bugs
-            ("spider",               "RedSpider"),        // general spider fallback
+            // // ── Bugs (general fallback — keep last) ──
+            // ("bug",                   "Bugs"),            // general "bug" fallback — last
+            // ("hemiptera",             "Bugs"),            // True bugs order
+            // ("heteroptera",           "Bugs"),            // Suborder of true bugs
+            // ("lygus",                 "Bugs"),            // Tarnished plant bug
+            // ("miridae",              "Bugs"),             // Plant bug family
+            // ("coreidae",              "Bugs"),            // Leaf-footed bugs
+            // ("leptoglossus",          "Bugs"),
+            // ("reduviidae",            "Bugs"),            // Assassin bugs
+            // ("tingidae",              "Bugs"),            // Lace bugs
+            // ("spider",               "RedSpider"),        // general spider fallback
         };
 
         // ─────────────────────────────────────────────────────────────────
