@@ -9,10 +9,10 @@ namespace RubberIntelligence.API.Modules.Dpp.Models
         [BsonRepresentation(BsonType.ObjectId)]
         public string Id { get; set; } = string.Empty;
 
-        [BsonRepresentation(BsonType.ObjectId)]
+        // Plain string — may contain non-ObjectId values such as "qir_{transactionId}"
         public string LotId { get; set; } = string.Empty;
 
-        [BsonRepresentation(BsonType.ObjectId)]
+        // Plain string — stores the parent document / transaction ID as-is
         public string DocumentId { get; set; } = string.Empty;
 
         public string FieldName { get; set; } = string.Empty;

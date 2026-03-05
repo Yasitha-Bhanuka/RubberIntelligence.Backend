@@ -45,3 +45,4 @@ namespace RubberIntelligence.API.Modules.Dpp.DTOs
         public int          ConfidentialFieldCount  { get; set; }
     }
 }
+
