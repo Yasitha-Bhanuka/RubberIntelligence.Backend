@@ -57,6 +57,32 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                       ?? throw new ArgumentNullException("GoogleApiKey not found in configuration");
         }
 
+        // Prompt for Quality Inspection Report field extraction — QIR-specific schema
+        private const string QirStructuredPrompt = """
+            You are a document parser for rubber quality inspection reports.
+            Extract the following fields from the document and return ONLY a valid JSON object.
+            Do NOT include any explanation, markdown formatting, or code fences — just the raw JSON.
+
+            Fields to extract (use null if not found):
+            {
+              "rubberGrade": "...",
+              "lotQuantityKg": "...",
+              "moistureContent": "...",
+              "dirtContent": "...",
+              "ashContent": "...",
+              "nitrogenContent": "...",
+              "plasticityRetentionIndex": "...",
+              "wallaceRapidPlasticity": "...",
+              "mooneyViscosity": "...",
+              "odour": "...",
+              "colour": "...",
+              "inspectionDate": "...",
+              "inspectorName": "...",
+              "inspectionAgency": "...",
+              "lotReference": "..."
+            }
+            """;
+
         // ── DPP document: structured key-value extraction ──
         public async Task<Dictionary<string, string>> ExtractFieldsAsync(Stream imageStream, string mimeType)
             => await ExtractStructuredFieldsAsync(imageStream, mimeType, StructuredPrompt, "DPP document");
@@ -64,6 +90,10 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
         // ── Invoice document: structured key-value extraction (invoice schema, File API for PDFs) ──
         public async Task<Dictionary<string, string>> ExtractInvoiceFieldsAsync(Stream invoiceStream, string mimeType)
             => await ExtractStructuredFieldsAsync(invoiceStream, mimeType, InvoiceStructuredPrompt, "invoice");
+
+        // ── Quality Inspection Report: structured key-value extraction ──
+        public async Task<Dictionary<string, string>> ExtractQirFieldsAsync(Stream qirStream, string mimeType)
+            => await ExtractStructuredFieldsAsync(qirStream, mimeType, QirStructuredPrompt, "quality inspection report");
 
         // ── Core: shared structured extraction — uses File API for PDFs, inline_data for images ──
         private async Task<Dictionary<string, string>> ExtractStructuredFieldsAsync(

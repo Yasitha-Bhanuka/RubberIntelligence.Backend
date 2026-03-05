@@ -18,7 +18,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         public string BuyerId { get; set; } = string.Empty;
 
         [BsonElement("status")]
-        public string Status { get; set; } = "PendingInvoice"; // Default start state for Buy Now
+        /// PendingInvoice → InvoiceUploaded → QirUploaded → Completed
+        public string Status { get; set; } = "PendingInvoice";
 
         [BsonElement("offerPrice")]
         public decimal OfferPrice { get; set; }
@@ -41,11 +42,28 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
 
         /// <summary>
         /// Safe display fields extracted from the invoice by Gemini.
-        /// Confidential field values (e.g. totalAmount) are stored as null here;
-        /// their ciphertexts live in the DppDocumentProcessingService ExtractedField records.
+        /// Confidential field values are stored as null; ciphertexts live in ExtractedField records.
         /// </summary>
         [BsonElement("invoiceFields")]
         public Dictionary<string, string?>? InvoiceFields { get; set; }
+
+        // ── Quality Inspection Report Data ──────────────────────────────
+
+        [BsonElement("qirPath")]
+        public string? QirPath { get; set; }
+
+        [BsonElement("qirClassification")]
+        public string? QirClassification { get; set; }
+
+        [BsonElement("qirEncryptionMetadata")]
+        public string? QirEncryptionMetadata { get; set; }
+
+        /// <summary>
+        /// Safe display fields extracted from the QIR by Gemini.
+        /// Confidential values (e.g. pricing-related) are null; ciphertexts in ExtractedField keyed by "qir_{id}".
+        /// </summary>
+        [BsonElement("qirFields")]
+        public Dictionary<string, string?>? QirFields { get; set; }
     }
 
     public class TransactionMessage
