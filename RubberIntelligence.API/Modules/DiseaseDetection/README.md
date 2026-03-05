@@ -2,22 +2,23 @@
 
 ## Overview
 
-The Disease Detection module allows rubber plantation users to identify **three categories of threats** by uploading a photo. The core novelty is the **Composite Strategy Pattern** — a single API endpoint delegates to three completely different AI backends based on the user's selection.
+The Disease Detection module allows rubber plantation users to identify **three categories of threats** by uploading a photo. The core novelty is the **Composite Strategy Pattern** — a single API endpoint delegates to three completely different AI backends based on the user's selection. **Output is restricted to trained classes only** via a centralized `AllowedClasses.cs` configuration.
 
-| #   | Detection Type   | Service                 | AI Approach                                                                                     |
-| --- | ---------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
-| 0   | **Leaf Disease** | `PlantIdDiseaseService` | [Plant.id](https://plant.id) Health Assessment API — 548+ conditions                            |
-| 1   | **Pest**         | `InsectIdPestService`   | [Insect.id](https://insect.kindwise.com) Identification API — thousands of invertebrate species |
-| 2   | **Weed**         | `PlantNetWeedService`   | External API ([PlantNet](https://my-api.plantnet.org))                                          |
+| #   | Detection Type   | Service                 | AI Approach                                                                                     | Output Restricted To             |
+| --- | ---------------- | ----------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------- |
+| 0   | **Leaf Disease** | `PlantIdDiseaseService` | [Plant.id](https://plant.id) Health Assessment API — 548+ conditions                            | 9 trained classes (ONNX labels)  |
+| 1   | **Pest**         | `InsectIdPestService`   | [Insect.id](https://insect.kindwise.com) Identification API — thousands of invertebrate species | 19 trained classes (ONNX labels) |
+| 2   | **Weed**         | `PlantNetWeedService`   | External API ([PlantNet](https://my-api.plantnet.org))                                          | No restriction                   |
 
 ## Architecture
 
 ```
 IDiseaseDetectionService (interface)
-├── CompositeDiseaseService  ← Registered as IDiseaseDetectionService (router)
-│   ├── PlantIdDiseaseService     (type == 0) → Plant.id Health Assessment API
-│   ├── InsectIdPestService       (type == 1) → Insect.id Identification API
-│   └── PlantNetWeedService       (type == 2) → PlantNet external API
+├── CompositeDiseaseService  ← Registered as IDiseaseDetectionService (router + class restriction)
+│   ├── PlantIdDiseaseService     (type == 0) → Plant.id API → AllowedClasses filter
+│   ├── InsectIdPestService       (type == 1) → Insect.id API → AllowedClasses filter
+│   ├── PlantNetWeedService       (type == 2) → PlantNet external API (no filter)
+│   └── AllowedClasses            (static) — centralized trained class lists + label mapping
 └── MockDiseaseService        ← For testing without API keys
 ```
 
@@ -99,8 +100,9 @@ DiseaseDetection/
 │   └── mobilenetv2.onnx                # MobileNetV2 for image content verification
 ├── Services/
 │   ├── IDiseaseDetectionService.cs     # Interface
-│   ├── CompositeDiseaseService.cs      # Strategy router
-│   ├── PlantIdDiseaseService.cs        # Plant.id API — leaf disease detection (548+ conditions)
+│   ├── CompositeDiseaseService.cs      # Strategy router + class restriction post-processing
+│   ├── AllowedClasses.cs              # ★ CENTRALIZED — trained class lists + label mapping
+│   ├── PlantIdDiseaseService.cs        # Plant.id API — leaf disease detection
 │   ├── InsectIdPestService.cs          # Insect.id API — pest identification
 │   ├── PlantNetWeedService.cs          # PlantNet API — weed/plant identification
 │   ├── ImageValidationService.cs       # Orchestrates quality + content checks
@@ -108,10 +110,20 @@ DiseaseDetection/
 │   ├── ContentVerificationService.cs   # MobileNetV2 content pre-screening
 │   ├── IImageValidationService.cs      # Validation interface
 │   ├── MockDiseaseService.cs           # Mock for testing without APIs
-│   ├── OnnxLeafDiseaseService.cs       # (Legacy) Custom ONNX model — kept as reference
-│   └── OnnxPestDetectionService.cs     # (Legacy) Custom ONNX model — kept as reference
+│   ├── OnnxLeafDiseaseService.cs       # (Reference) Custom ONNX model for leaf disease
+│   └── OnnxPestDetectionService.cs     # (Reference) Custom ONNX model for pest detection
 └── README.md
 ```
+
+## Class Restriction Pipeline
+
+After the external API returns a prediction, `CompositeDiseaseService` passes the label through `AllowedClasses.MapLabel()`:
+
+1. **Exact match** — if the API label matches a trained class name (case-insensitive), it passes through
+2. **Keyword mapping** — if the API label contains a known keyword (e.g. "colletotrichum" → `Colletorichum`), it maps to the trained class
+3. **No match** — returned as `Unidentified` with `IsRejected = true`, which also **skips proximity alerts**
+
+**To add or remove detectable classes, edit only `AllowedClasses.cs`.**
 
 ## Plant.id Leaf Disease Service
 
