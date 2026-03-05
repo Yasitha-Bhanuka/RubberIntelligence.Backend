@@ -82,6 +82,11 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.Grading.Services.IGrad
 builder.Services.AddScoped<RubberIntelligence.API.Modules.RubberLatexQuality.Services.ILatexQualityService, RubberIntelligence.API.Modules.RubberLatexQuality.Services.OnnxLatexQualityService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Bidding.Services.IBiddingRepository, RubberIntelligence.API.Modules.Bidding.Services.BiddingRepository>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Bidding.Services.IBiddingService, RubberIntelligence.API.Modules.Bidding.Services.BiddingService>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.Bidding.Services.IBlockchainService, RubberIntelligence.API.Modules.Bidding.Services.MockBlockchainService>();
+builder.Services.AddHostedService<RubberIntelligence.API.Modules.Bidding.Workers.AuctionClosingWorker>();
+
+// Add SignalR
+builder.Services.AddSignalR();
 
 builder.Services.AddHttpClient<RubberIntelligence.API.Modules.Dpp.Services.GeminiOcrService>();
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.Dpp.Services.OnnxDppService>();
@@ -187,6 +192,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<RubberIntelligence.API.Modules.Bidding.Hubs.AuctionHub>("/hubs/auction");
 
 // Ensure geospatial indexes + Seed Database
 // Wrapped in try-catch: a MongoDB timeout must not crash the whole app

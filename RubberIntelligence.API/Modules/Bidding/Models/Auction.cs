@@ -38,6 +38,9 @@ namespace RubberIntelligence.API.Modules.Bidding.Models
 
         public bool IsNftSecured { get; set; } = true;
         public string? NftTokenId { get; set; }
+        public string? IpfsHash { get; set; }
+        public int? EsgScore { get; set; }
+        
         public string? LotId { get; set; } // Reference to traceability lot
         
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
