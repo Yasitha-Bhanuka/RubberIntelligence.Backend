@@ -143,7 +143,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             var probability = topSuggestion.Probability ?? 0;
 
             // Determine severity based on confidence
-            string severity = probability switch
+            string severity = diseaseName.Contains("healthy", StringComparison.OrdinalIgnoreCase) ? "None" : probability switch
             {
                 > 0.8 => "High",
                 > 0.5 => "Medium",

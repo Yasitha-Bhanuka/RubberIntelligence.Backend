@@ -151,7 +151,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             {
                 Label = predictedLabel,
                 Confidence = maxScore,
-                Severity = maxScore > 0.8 ? "High" : "Medium",
+                Severity = predictedLabel == "Healthy" ? "None" : (maxScore > 0.8 ? "High" : "Medium"),
                 Remedy = remedy
             };
         }
