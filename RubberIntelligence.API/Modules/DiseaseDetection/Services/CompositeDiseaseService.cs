@@ -5,15 +5,15 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
     public class CompositeDiseaseService : IDiseaseDetectionService
     {
-        private readonly OnnxLeafDiseaseService _leafService;
-        private readonly OnnxPestDetectionService _pestService;
-        private readonly OnnxWeedDetectionService _weedService;
+        private readonly ILeafDiseaseService _leafService;
+        private readonly IPestDetectionService _pestService;
+        private readonly IWeedDetectionService _weedService;
         private readonly IImageValidationService _validationService;
 
         public CompositeDiseaseService(
-            OnnxLeafDiseaseService leafService, 
-            OnnxPestDetectionService pestService, 
-            OnnxWeedDetectionService weedService,
+            ILeafDiseaseService leafService, 
+            IPestDetectionService pestService, 
+            IWeedDetectionService weedService,
             IImageValidationService validationService)
         {
             _leafService = leafService;
@@ -54,9 +54,30 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 result = await _leafService.PredictAsync(request);
             }
 
-            // 3. Return the result directly.
-            // ONNX models output trained class labels exactly, so we no longer
-            // need to map free-form external API labels through AllowedClasses.cs.
+            // 3. Map to Allowed Classes if using External API
+            // External APIs return free-form strings (e.g. "Bemisia tabaci").
+            // We map these back to our recognized plantation classes 
+            // (e.g. "Whitefly"). If it doesn't match, we reject it.
+            // Weed Detection ALWAYS uses external API now.
+            bool isExternalApi = request.Type == DiseaseType.Weed || !(_leafService is OnnxLeafDiseaseService);
+
+            if (isExternalApi && !result.IsRejected)
+            {
+                var mappedLabel = AllowedClasses.MapLabel(result.Label, request.Type);
+                if (mappedLabel != null)
+                {
+                    result.Label = mappedLabel; // e.g. "Bemisia" -> "Whitefly"
+                }
+                else
+                {
+                    // It's a disease/pest the system doesn't care about (e.g., Apple Scab, House Spider)
+                    result.IsRejected = true;
+                    result.RejectionReason = $"The detected condition/pest '{result.Label}' is not recognized as a standard rubber plantation threat.";
+                    result.Label = "Unrecognized Domain";
+                    result.Severity = "N/A";
+                }
+            }
+
             return result;
         }
     }

@@ -8,7 +8,7 @@ using RubberIntelligence.API.Modules.DiseaseDetection.Enums;
 
 namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
-    public class OnnxLeafDiseaseService : IDiseaseDetectionService
+    public class OnnxLeafDiseaseService : ILeafDiseaseService
     {
         private readonly string _modelPath;
         private readonly InferenceSession _session;

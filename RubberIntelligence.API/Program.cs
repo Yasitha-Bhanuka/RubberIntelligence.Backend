@@ -64,10 +64,27 @@ builder.Services.AddScoped<IMarketplaceRepository, MarketplaceRepository>();
 builder.Services.AddTransient<DbSeeder>();
 
 // Register Module Services
-// Register Disease Detection Strategy — ONNX-based local services
-builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
-builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxPestDetectionService>();
-builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxWeedDetectionService>();
+
+// Register Disease Detection Strategy (ONNX vs API)
+var diseaseStrategy = Environment.GetEnvironmentVariable("DISEASE_DETECTION_STRATEGY") 
+                        ?? builder.Configuration.GetValue<string>("DiseaseDetectionStrategy", "ONNX");
+
+if (diseaseStrategy?.ToUpperInvariant() == "API")
+{
+    // Register External APIs for Leaf and Pest
+    builder.Services.AddScoped<ILeafDiseaseService, RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantIdDiseaseService>();
+    builder.Services.AddScoped<IPestDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.InsectIdPestService>();
+}
+else
+{
+    // Register Local ONNX Models for Leaf and Pest
+    builder.Services.AddSingleton<ILeafDiseaseService, RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
+    builder.Services.AddSingleton<IPestDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxPestDetectionService>();
+}
+
+// ALWAYS use PlantNet API for Weed Detection (No dedicated ONNX model exists)
+builder.Services.AddScoped<IWeedDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>();
+
 // Register Image Validation Services
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.ImageQualityService>();
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.ContentVerificationService>();

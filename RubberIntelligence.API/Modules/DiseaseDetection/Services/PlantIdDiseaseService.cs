@@ -12,7 +12,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
     /// with a pretrained model covering 548+ plant health conditions.
     /// API docs: https://plant.id/docs
     /// </summary>
-    public class PlantIdDiseaseService : IDiseaseDetectionService
+    public class PlantIdDiseaseService : ILeafDiseaseService
     {
         private readonly HttpClient _httpClient;
         private readonly string? _apiKey;

@@ -14,7 +14,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
     /// (healthy, diseased, pest-affected) on weed/plant images.
     /// The output labels are mapped to weed-specific terminology.
     /// </summary>
-    public class OnnxWeedDetectionService : IDiseaseDetectionService
+    public class OnnxWeedDetectionService : IWeedDetectionService
     {
         private readonly InferenceSession? _session;
         private readonly ILogger<OnnxWeedDetectionService> _logger;
