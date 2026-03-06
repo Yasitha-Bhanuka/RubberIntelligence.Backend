@@ -26,7 +26,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             _logger = logger;
         }
 
-        public async Task CreateProximityAlertsAsync(DiseaseRecord detection)
+        public async Task CreateProximityAlertsAsync(DiseaseRecord detection, string severity)
         {
             if (detection.Location == null)
             {
@@ -68,6 +68,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                     Latitude = latitude,
                     Longitude = longitude,
                     CreatedAt = DateTime.UtcNow,
+                    Severity = severity,
                     IsRead = false
                 }).ToList();
 

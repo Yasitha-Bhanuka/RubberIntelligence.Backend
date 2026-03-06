@@ -7,7 +7,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
         /// <summary>
         /// Finds nearby farmers and creates proximity alerts for a detected disease.
         /// </summary>
-        Task CreateProximityAlertsAsync(DiseaseRecord detection);
+        Task CreateProximityAlertsAsync(DiseaseRecord detection, string severity);
 
         /// <summary>
         /// Gets all alerts for a specific farmer, ordered by most recent.
