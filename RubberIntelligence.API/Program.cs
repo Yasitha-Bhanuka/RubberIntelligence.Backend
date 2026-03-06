@@ -104,6 +104,7 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppDocume
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryptionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ConfidentialAccessService>();
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ZeroKnowledgeEncryptionService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ExporterContextService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.MessageService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Marketplace.Services.BuyerHistoryService>(); // Buyer history analytics
