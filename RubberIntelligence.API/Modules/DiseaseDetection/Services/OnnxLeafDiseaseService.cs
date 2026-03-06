@@ -122,7 +122,26 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 }
             }
 
-            // 7. Map to Result
+            // 7. Confidence Threshold Check (OOD / Not a Rubber Leaf)
+            // If the model is not confident, it's highly likely this is NOT a rubber leaf
+            // or the image is too blurry/ambiguous.
+            float confidenceThreshold = 0.60f; // 60% threshold
+
+            if (maxScore < confidenceThreshold)
+            {
+                _logger.LogWarning($"[AI] Low confidence ({maxScore:P2}). Rejecting as unrecognized.");
+                return new PredictionResponse
+                {
+                    Label = "Unrecognized",
+                    Confidence = maxScore,
+                    Severity = "N/A",
+                    Remedy = "The model could not confidently identify this image. Please ensure you are capturing a clear picture of a Rubber Tree leaf.",
+                    IsRejected = true,
+                    RejectionReason = $"Low confidence ({maxScore:P2}). The image may not be a valid Rubber Leaf or the disease is unrecognizable."
+                };
+            }
+
+            // 8. Map to Result
             string predictedLabel = _labels[maxIndex];
             string remedy = GetRemedy(predictedLabel);
 
