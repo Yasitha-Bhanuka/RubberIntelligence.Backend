@@ -5,15 +5,15 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
     public class CompositeDiseaseService : IDiseaseDetectionService
     {
-        private readonly PlantIdDiseaseService _leafService;
-        private readonly InsectIdPestService _pestService;
-        private readonly PlantNetWeedService _weedService;
+        private readonly OnnxLeafDiseaseService _leafService;
+        private readonly OnnxPestDetectionService _pestService;
+        private readonly OnnxWeedDetectionService _weedService;
         private readonly IImageValidationService _validationService;
 
         public CompositeDiseaseService(
-            PlantIdDiseaseService leafService, 
-            InsectIdPestService pestService, 
-            PlantNetWeedService weedService,
+            OnnxLeafDiseaseService leafService, 
+            OnnxPestDetectionService pestService, 
+            OnnxWeedDetectionService weedService,
             IImageValidationService validationService)
         {
             _leafService = leafService;
@@ -54,28 +54,9 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 result = await _leafService.PredictAsync(request);
             }
 
-            // 3. Restrict output to trained classes (centralized in AllowedClasses.cs)
-            //    If the API label does not match a trained class, mark as rejected.
-            //    This also prevents proximity alerts from firing (DiseaseController
-            //    checks IsRejected before calling AlertService).
-            var mappedLabel = AllowedClasses.MapLabel(result.Label, request.Type);
-            if (mappedLabel == null)
-            {
-                return new PredictionResponse
-                {
-                    Label = "Unidentified",
-                    Confidence = result.Confidence,
-                    Severity = "N/A",
-                    Remedy = $"The detected condition '{result.Label}' is outside the trained model boundary. " +
-                             "Please capture a clearer image or consult an agricultural expert.",
-                    IsRejected = true,
-                    // RejectionReason = $"'{result.Label}' does not match any trained class for {request.Type} detection."
-                    RejectionReason = $"Does not match any trained class for detection."
-                };
-            }
-
-            // Apply the mapped (normalized) label
-            result.Label = mappedLabel;
+            // 3. Return the result directly.
+            // ONNX models output trained class labels exactly, so we no longer
+            // need to map free-form external API labels through AllowedClasses.cs.
             return result;
         }
     }

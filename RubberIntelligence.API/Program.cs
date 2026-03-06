@@ -64,13 +64,10 @@ builder.Services.AddScoped<IMarketplaceRepository, MarketplaceRepository>();
 builder.Services.AddTransient<DbSeeder>();
 
 // Register Module Services
-// Register Disease Detection Strategy — API-based services
-builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>(); // Type-Client
-builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantIdDiseaseService>(); // Plant.id API
-builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.InsectIdPestService>(); // Insect.id API
-builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantIdDiseaseService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.InsectIdPestService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>();
+// Register Disease Detection Strategy — ONNX-based local services
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxPestDetectionService>();
+builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxWeedDetectionService>();
 // Register Image Validation Services
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.ImageQualityService>();
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.ContentVerificationService>();
