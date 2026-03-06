@@ -5,15 +5,15 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
     public class CompositeDiseaseService : IDiseaseDetectionService
     {
-        private readonly PlantIdDiseaseService _leafService;
-        private readonly InsectIdPestService _pestService;
-        private readonly PlantNetWeedService _weedService;
+        private readonly ILeafDiseaseService _leafService;
+        private readonly IPestDetectionService _pestService;
+        private readonly IWeedDetectionService _weedService;
         private readonly IImageValidationService _validationService;
 
         public CompositeDiseaseService(
-            PlantIdDiseaseService leafService, 
-            InsectIdPestService pestService, 
-            PlantNetWeedService weedService,
+            ILeafDiseaseService leafService, 
+            IPestDetectionService pestService, 
+            IWeedDetectionService weedService,
             IImageValidationService validationService)
         {
             _leafService = leafService;
@@ -54,28 +54,30 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 result = await _leafService.PredictAsync(request);
             }
 
-            // 3. Restrict output to trained classes (centralized in AllowedClasses.cs)
-            //    If the API label does not match a trained class, mark as rejected.
-            //    This also prevents proximity alerts from firing (DiseaseController
-            //    checks IsRejected before calling AlertService).
-            var mappedLabel = AllowedClasses.MapLabel(result.Label, request.Type);
-            if (mappedLabel == null)
+            // 3. Map to Allowed Classes if using External API
+            // External APIs return free-form strings (e.g. "Bemisia tabaci").
+            // We map these back to our recognized plantation classes 
+            // (e.g. "Whitefly"). If it doesn't match, we reject it.
+            // Weed Detection ALWAYS uses external API now.
+            bool isExternalApi = request.Type == DiseaseType.Weed || !(_leafService is OnnxLeafDiseaseService);
+
+            if (isExternalApi && !result.IsRejected)
             {
-                return new PredictionResponse
+                var mappedLabel = AllowedClasses.MapLabel(result.Label, request.Type);
+                if (mappedLabel != null)
                 {
-                    Label = "Unidentified",
-                    Confidence = result.Confidence,
-                    Severity = "N/A",
-                    Remedy = $"The detected condition '{result.Label}' is outside the trained model boundary. " +
-                             "Please capture a clearer image or consult an agricultural expert.",
-                    IsRejected = true,
-                    // RejectionReason = $"'{result.Label}' does not match any trained class for {request.Type} detection."
-                    RejectionReason = $"Does not match any trained class for detection."
-                };
+                    result.Label = mappedLabel; // e.g. "Bemisia" -> "Whitefly"
+                }
+                else
+                {
+                    // It's a disease/pest the system doesn't care about (e.g., Apple Scab, House Spider)
+                    result.IsRejected = true;
+                    result.RejectionReason = $"The detected condition/pest '{result.Label}' is not recognized as a standard rubber plantation threat.";
+                    result.Label = "Unrecognized Domain";
+                    result.Severity = "N/A";
+                }
             }
 
-            // Apply the mapped (normalized) label
-            result.Label = mappedLabel;
             return result;
         }
     }

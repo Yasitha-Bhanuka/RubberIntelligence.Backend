@@ -12,7 +12,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
     /// with a pretrained model covering 548+ plant health conditions.
     /// API docs: https://plant.id/docs
     /// </summary>
-    public class PlantIdDiseaseService : IDiseaseDetectionService
+    public class PlantIdDiseaseService : ILeafDiseaseService
     {
         private readonly HttpClient _httpClient;
         private readonly string? _apiKey;
@@ -143,7 +143,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             var probability = topSuggestion.Probability ?? 0;
 
             // Determine severity based on confidence
-            string severity = probability switch
+            string severity = diseaseName.Contains("healthy", StringComparison.OrdinalIgnoreCase) ? "None" : probability switch
             {
                 > 0.8 => "High",
                 > 0.5 => "Medium",

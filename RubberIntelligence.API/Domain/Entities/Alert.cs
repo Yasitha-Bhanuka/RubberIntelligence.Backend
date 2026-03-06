@@ -32,6 +32,9 @@ namespace RubberIntelligence.API.Domain.Entities
         [BsonElement("createdAt")]
         public DateTime CreatedAt { get; set; }
 
+        [BsonElement("severity")]
+        public string Severity { get; set; } = "Low";
+
         [BsonElement("isRead")]
         public bool IsRead { get; set; }
     }
