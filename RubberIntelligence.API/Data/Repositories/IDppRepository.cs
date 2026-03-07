@@ -13,14 +13,5 @@ namespace RubberIntelligence.API.Data.Repositories
         Task CreateDppAsync(DigitalProductPassport dpp);
         Task<DigitalProductPassport?> GetDppByLotIdAsync(string lotId);
         Task<List<ExtractedField>> GetExtractedFieldsByLotIdAsync(string lotId);
-
-        // ── Controlled Access: AccessRequest ────────────────────────────
-        Task CreateAccessRequestAsync(AccessRequest request);
-        Task<AccessRequest?> GetAccessRequestAsync(string requestId);
-        Task ApproveAccessRequestAsync(string requestId);
-        Task RejectAccessRequestAsync(string requestId);
-        Task<AccessRequest?> GetApprovedRequestForLotAndExporterAsync(string lotId, string exporterId);
-        Task<List<AccessRequest>> GetPendingRequestsForBuyerAsync(string buyerId);
-        Task<List<AccessRequest>> GetAccessRequestsByExporterIdAsync(string exporterId);
     }
 }

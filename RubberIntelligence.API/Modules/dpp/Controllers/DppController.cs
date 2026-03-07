@@ -17,8 +17,6 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
         private readonly OnnxDppService _onnxDppService;
         private readonly DppDocumentProcessingService _processingService;
         private readonly DppService _dppService;
-        private readonly ConfidentialAccessService _confidentialAccessService;
-        private readonly ExporterContextService _exporterContextService;
         private readonly IDppRepository _dppRepository;
         private readonly IUserRepository _userRepository;
         private readonly IWebHostEnvironment _env;
@@ -29,8 +27,6 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             OnnxDppService onnxDppService,
             DppDocumentProcessingService processingService,
             DppService dppService,
-            ConfidentialAccessService confidentialAccessService,
-            ExporterContextService exporterContextService,
             IDppRepository dppRepository,
             IUserRepository userRepository,
             IWebHostEnvironment env,
@@ -40,8 +36,6 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             _onnxDppService            = onnxDppService;
             _processingService         = processingService;
             _dppService                = dppService;
-            _confidentialAccessService = confidentialAccessService;
-            _exporterContextService    = exporterContextService;
             _dppRepository             = dppRepository;
             _userRepository            = userRepository;
             _env                       = env;
@@ -251,186 +245,7 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             return Ok(doc);
         }
 
-        // ───────────────────────────────────────────────────────────────────────────
-        // CONTROLLED ACCESS — AccessRequest workflow
-        // ───────────────────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Exporter submits a request to view confidential fields for a lot.
-        /// Status starts as PENDING — buyer must approve it.
-        /// </summary>
-        [Authorize(Roles = "Exporter")]
-        [HttpPost("request-confidential/{lotId}")]
-        public async Task<IActionResult> RequestConfidentialAccess(string lotId)
-        {
-            var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
-
-            // Verify the DPP exists
-            var doc = await _dppRepository.GetByIdAsync(lotId);
-            if (doc == null) return NotFound(new { error = "DPP document not found." });
-
-            var request = new AccessRequest
-            {
-                LotId      = lotId,
-                ExporterId = exporterId,
-                BuyerId    = doc.UploadedBy,
-                Status     = AccessRequestStatus.Pending
-            };
-
-            await _dppRepository.CreateAccessRequestAsync(request);
-            _logger.LogInformation("[DPP] Exporter {ExporterId} requested confidential access for lot {LotId}", exporterId, lotId);
-
-            return Ok(new { requestId = request.Id, status = request.Status });
-        }
-
-        /// <summary>
-        /// Buyer approves an exporter's access request.
-        /// Only the buyer who owns the DPP can approve.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpPost("approve-confidential/{requestId}")]
-        public async Task<IActionResult> ApproveConfidentialAccess(string requestId)
-        {
-            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            var request = await _dppRepository.GetAccessRequestAsync(requestId);
-            if (request == null) return NotFound(new { error = "Access request not found." });
-
-            // Ensure only the owning buyer can approve
-            if (request.BuyerId != buyerId)
-                return Forbid();
-
-            if (request.Status != AccessRequestStatus.Pending)
-                return BadRequest(new { error = $"Request is already {request.Status}." });
-
-            await _dppRepository.ApproveAccessRequestAsync(requestId);
-            _logger.LogInformation("[DPP] Buyer {BuyerId} approved confidential access request {RequestId}", buyerId, requestId);
-
-            return Ok(new { requestId, status = AccessRequestStatus.Approved });
-        }
-
-        /// <summary>
-        /// Buyer rejects an exporter's access request.
-        /// Only the buyer who owns the DPP can reject.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpPost("reject-confidential/{requestId}")]
-        public async Task<IActionResult> RejectConfidentialAccess(string requestId)
-        {
-            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            var request = await _dppRepository.GetAccessRequestAsync(requestId);
-            if (request == null) return NotFound(new { error = "Access request not found." });
-
-            if (request.BuyerId != buyerId)
-                return Forbid();
-
-            if (request.Status != AccessRequestStatus.Pending)
-                return BadRequest(new { error = $"Request is already {request.Status}. Only PENDING requests can be rejected." });
-
-            await _dppRepository.RejectAccessRequestAsync(requestId);
-            _logger.LogInformation("[DPP] Buyer {BuyerId} rejected confidential access request {RequestId}", buyerId, requestId);
-
-            return Ok(new { requestId, status = AccessRequestStatus.Rejected });
-        }
-
-        /// <summary>
-        /// Buyer fetches all PENDING access requests for their lots.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpGet("pending-requests")]
-        public async Task<IActionResult> GetPendingRequests()
-        {
-            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            var requests = await _dppRepository.GetPendingRequestsForBuyerAsync(buyerId);
-            return Ok(requests.Select(r => new
-            {
-                r.Id,
-                r.LotId,
-                r.ExporterId,
-                r.Status,
-                r.RequestedAt
-            }));
-        }
-
-        /// <summary>
-        /// Exporter fetches all their own access requests (PENDING, APPROVED, REJECTED).
-        /// Allows the exporter dashboard to show real-time request statuses without polling the confidential endpoint.
-        /// </summary>
-        [Authorize(Roles = "Exporter,Admin")]
-        [HttpGet("my-requests")]
-        public async Task<IActionResult> GetMyAccessRequests()
-        {
-            var exporterId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
-
-            var requests = await _dppRepository.GetAccessRequestsByExporterIdAsync(exporterId);
-            return Ok(requests.Select(r => new
-            {
-                r.Id,
-                r.LotId,
-                r.Status,
-                r.RequestedAt,
-                r.ApprovedAt
-            }));
-        }
-
-        /// <summary>
-        /// Exporter retrieves decrypted confidential fields.
-        /// Gate: APPROVED AccessRequest must exist for this exporter + lotId.
-        /// Decryption happens ONLY in ConfidentialAccessService — never here.
-        /// </summary>
-        [Authorize(Roles = "Exporter,Admin")]
-        [HttpGet("confidential/{lotId}")]
-        public async Task<IActionResult> GetConfidentialFields(string lotId)
-        {
-            var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
-
-            // 1. Verify an APPROVED access request exists
-            var approvedRequest = await _dppRepository.GetApprovedRequestForLotAndExporterAsync(lotId, exporterId);
-            if (approvedRequest == null)
-                return StatusCode(403, new { error = "Access denied. Submit POST /api/dpp/request-confidential/{lotId} and await buyer approval." });
-
-            // 2. Fetch only confidential ExtractedFields
-            var allFields = await _dppRepository.GetExtractedFieldsByLotIdAsync(lotId);
-            var confidentialFields = allFields.Where(f => f.IsConfidential).ToList();
-
-            if (confidentialFields.Count == 0)
-                return Ok(new { message = "No confidential fields found for this lot.", fields = Array.Empty<object>() });
-
-            // 3. Delegate decryption to service layer — never decrypt in controller.
-            //    Pass the full AccessRequest so the service can double-verify status (defense-in-depth).
-            List<ConfidentialFieldDto> decryptedFields;
-            try
-            {
-                decryptedFields = _confidentialAccessService.DecryptFields(
-                    approvedRequest, exporterId!, confidentialFields);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                // Service-layer gate blocked the call despite the DB check above
-                _logger.LogWarning("[DPP] Service-layer gate blocked decryption: {Msg}", ex.Message);
-                return StatusCode(403, new { error = ex.Message });
-            }
-
-            // 4. Log access
-            _logger.LogInformation(
-                "[DPP] CONFIDENTIAL ACCESS: Exporter {ExporterId} accessed confidential fields for lot {LotId} at {Time}",
-                exporterId, lotId, DateTime.UtcNow);
-
-            return Ok(new
-            {
-                lotId,
-                accessGrantedAt = approvedRequest.ApprovedAt,
-                fields          = decryptedFields
-            });
-        }
 
         // ── GET /api/dpp/verify/{lotId} ──────────────────────────────────
         /// <summary>
@@ -457,32 +272,5 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             }
         }
 
-        // ── GET /api/dpp/exporter-context/{exporterId} ───────────────────
-        /// <summary>
-        /// Returns exporter profile context to the authenticated buyer.
-        /// Used in PendingRequestsScreen so buyers can review an exporter before approving.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpGet("exporter-context/{exporterId}")]
-        public async Task<IActionResult> GetExporterContext(string exporterId)
-        {
-            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            try
-            {
-                var context = await _exporterContextService.GetExporterContext(exporterId, buyerId);
-                return Ok(context);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[DPP] ExporterContext fetch failed for {ExporterId}", exporterId);
-                return StatusCode(500, new { error = "Failed to retrieve exporter context", details = ex.Message });
-            }
-        }
     }
 }

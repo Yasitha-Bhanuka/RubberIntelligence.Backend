@@ -25,7 +25,6 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         private readonly ILogger<MarketplaceController> _logger;
         private readonly IDppRepository _dppRepository;
         private readonly FieldEncryptionService _fieldEncryptionService;
-        private readonly ZeroKnowledgeEncryptionService _zkEncryptionService;
 
         public MarketplaceController(
             IMarketplaceRepository marketplaceRepository,
@@ -37,8 +36,7 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             IWebHostEnvironment env,
             ILogger<MarketplaceController> logger,
             IDppRepository dppRepository,
-            FieldEncryptionService fieldEncryptionService,
-            ZeroKnowledgeEncryptionService zkEncryptionService)
+            FieldEncryptionService fieldEncryptionService)
         {
             _marketplaceRepository  = marketplaceRepository;
             _userRepository         = userRepository;
@@ -50,7 +48,6 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             _logger                 = logger;
             _dppRepository          = dppRepository;
             _fieldEncryptionService = fieldEncryptionService;
-            _zkEncryptionService    = zkEncryptionService;
         }
 
         // ==========================================
@@ -543,26 +540,17 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             });
         }
 
-        // ==========================================
-        // Dual-Layer DPP (Zero-Knowledge Delivery)
-        // ==========================================
-
         /// <summary>
-        /// GET /api/Marketplace/transactions/{id}/dual-layer-dpp
-        ///
-        /// Returns a dual-layer payload:
-        ///   Layer 1 (publicSummary)     — cleartext metadata safe for any authenticated viewer.
-        ///   Layer 2 (encryptedVault)    — AES-256-CBC ciphertext of the invoice file.
-        ///   Layer 3 (encryptionMetadata)— RSA-OAEP-wrapped AES key + IV; only the exporter's
-        ///                                 RSA private key can unwrap the AES key.
-        ///
-        /// ReBAC: Only the exporter who purchased this lot may call this endpoint.
+        /// GET /api/Marketplace/transactions/{id}/exporter-dpp
+        /// Returns the combined Digital Product Passport for the purchasing exporter.
+        /// Built from invoice fields + QIR fields uploaded by the buyer.
+        /// Confidential buyer fields are withheld (value = null, isConfidential = true).
+        /// Only accessible by the Exporter who purchased this lot.
         /// </summary>
-        [Authorize(Roles = "Exporter")]
-        [HttpGet("transactions/{id}/dual-layer-dpp")]
-        public async Task<IActionResult> GetDualLayerDpp(string id)
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("transactions/{id}/exporter-dpp")]
+        public async Task<IActionResult> GetExporterDpp(string id)
         {
-            // ── ReBAC gate: caller must be the purchasing exporter ────────
             var callerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(callerId)) return Unauthorized();
 
@@ -570,76 +558,52 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             if (transaction == null)
                 return NotFound(new { error = "Transaction not found." });
 
-            if (transaction.ExporterId != callerId)
-                return StatusCode(403, new { error = "Access denied: only the purchasing exporter may retrieve this DPP." });
+            if (transaction.ExporterId != callerId && !User.IsInRole("Admin"))
+                return StatusCode(403, new { error = "Access denied: only the purchasing exporter may view this DPP." });
 
-            // ── Validate that an invoice has been uploaded ────────────────
-            if (string.IsNullOrEmpty(transaction.DppInvoicePath))
-                return NotFound(new { error = "No invoice has been uploaded for this transaction yet." });
+            // ── Invoice fields (lotId = transactionId) ──────────────────
+            var invoiceStoredFields = await _dppRepository.GetExtractedFieldsByLotIdAsync(id);
+            var invoiceFields = invoiceStoredFields
+                .OrderBy(f => f.IsConfidential ? 1 : 0)
+                .ThenBy(f => f.FieldName)
+                .Select(f => new
+                {
+                    fieldName      = f.FieldName,
+                    // Confidential buyer fields are withheld from the exporter
+                    value          = f.IsConfidential ? null : (string.IsNullOrEmpty(f.EncryptedValue) ? null : f.EncryptedValue),
+                    isConfidential = f.IsConfidential
+                })
+                .ToList();
 
-            // ── Resolve the exporter's RSA public key ────────────────────
-            if (!Guid.TryParse(callerId, out var exporterGuid))
-                return BadRequest(new { error = "Invalid exporter ID format." });
-
-            var exporter = await _userRepository.GetByIdAsync(exporterGuid);
-            if (exporter == null)
-                return NotFound(new { error = "Exporter profile not found." });
-
-            if (string.IsNullOrEmpty(exporter.PublicKey))
-                return BadRequest(new { error = "Exporter RSA public key has not been registered. Complete key-pair setup first." });
-
-            // ── Read the stored (encrypted) invoice file ─────────────────
-            if (!System.IO.File.Exists(transaction.DppInvoicePath))
-                return NotFound(new { error = "Invoice file is missing from storage." });
-
-            byte[] invoiceFileBytes;
-            try
-            {
-                invoiceFileBytes = await System.IO.File.ReadAllBytesAsync(transaction.DppInvoicePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[DualLayerDpp] Failed to read invoice file for transaction {TxId}", id);
-                return StatusCode(500, new { error = "Failed to read invoice file." });
-            }
-
-            // ── Hybrid encrypt: AES-256 + RSA-OAEP-SHA256 ────────────────
-            var hybridResult = _zkEncryptionService.EncryptDocumentHybrid(
-                invoiceFileBytes, exporter.PublicKey);
-
-            // ── Resolve the DPP passport for publicSummary ───────────────
-            string lotId       = transaction.DppDocumentId ?? id;
-            string rubberGrade = "N/A";
-            double quantity    = 0;
-            string dppHash     = "N/A";
-
-            var passport = await _dppRepository.GetDppByLotIdAsync(lotId);
-            if (passport != null)
-            {
-                rubberGrade = passport.RubberGrade;
-                quantity    = passport.Quantity;
-                dppHash     = passport.DppHash;
-            }
-
-            _logger.LogInformation(
-                "[DualLayerDpp] Exporter {ExporterId} retrieved dual-layer DPP for transaction {TxId}, lot {LotId}",
-                callerId, id, lotId);
+            // ── QIR fields (lotId = "qir_{transactionId}") ──────────────
+            var qirLotId         = $"qir_{id}";
+            var qirStoredFields  = await _dppRepository.GetExtractedFieldsByLotIdAsync(qirLotId);
+            var qirFields = qirStoredFields
+                .OrderBy(f => f.IsConfidential ? 1 : 0)
+                .ThenBy(f => f.FieldName)
+                .Select(f => new
+                {
+                    fieldName      = f.FieldName,
+                    value          = f.IsConfidential ? null : (string.IsNullOrEmpty(f.EncryptedValue) ? null : f.EncryptedValue),
+                    isConfidential = f.IsConfidential
+                })
+                .ToList();
 
             return Ok(new
             {
-                publicSummary = new
-                {
-                    LotId       = lotId,
-                    RubberGrade = rubberGrade,
-                    Quantity    = quantity,
-                    DppHash     = dppHash
-                },
-                encryptedVault = hybridResult.EncryptedVaultBase64,
-                encryptionMetadata = new
-                {
-                    hybridResult.EncryptedAesKeyBase64,
-                    hybridResult.IvBase64
-                }
+                transactionId         = transaction.Id,
+                status                = transaction.Status,
+                exporterName          = transaction.ExporterName ?? "Unknown",
+                buyerRef              = transaction.BuyerId?.Length >= 8
+                                            ? transaction.BuyerId.Substring(0, 8)
+                                            : transaction.BuyerId ?? "N/A",
+                offerPrice            = transaction.OfferPrice,
+                lastUpdatedAt         = transaction.LastUpdatedAt,
+                invoiceClassification = transaction.DppClassification,
+                qirClassification     = transaction.QirClassification,
+                invoiceFields,
+                qirFields,
+                generatedAt           = DateTime.UtcNow
             });
         }
 
