@@ -23,5 +23,8 @@ namespace RubberIntelligence.API.Data.Repositories
             => await _collection.Find(x => x.LotId == lotId)
                 .SortBy(x => x.CreatedAt)
                 .ToListAsync();
+
+        public async Task<long> GetUnreadCountAsync(string receiverId)
+            => await _collection.CountDocumentsAsync(x => x.ReceiverId == receiverId);
     }
 }

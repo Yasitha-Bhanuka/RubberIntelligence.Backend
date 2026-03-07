@@ -27,6 +27,9 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         [BsonElement("lastUpdatedAt")]
         public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
 
+        [BsonElement("secretRequestId")]
+        public string? SecretRequestId { get; set; }
+
         // DPP & Invoice Data
         [BsonElement("dppInvoicePath")]
         public string? DppInvoicePath { get; set; }

@@ -667,5 +667,187 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 return StatusCode(500, new { error = "Unable to retrieve QIR fields. Please try again." });
             }
         }
+
+        // ==========================================
+        // Lot Interest Request Flow
+        // ==========================================
+
+        /// <summary>
+        /// POST /api/Marketplace/posts/{id}/express-interest
+        /// Exporter signals interest in a buyer's rubber lot.
+        /// Post status changes to REQUESTED so the buyer gets notified on next dashboard load.
+        /// </summary>
+        [Authorize(Roles = "Exporter")]
+        [HttpPost("posts/{id}/express-interest")]
+        public async Task<IActionResult> ExpressInterest(string id)
+        {
+            var exporterId   = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var exporterName = User.FindFirst(ClaimTypes.Name)?.Value ?? "Unknown Exporter";
+            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
+
+            var post = await _marketplaceRepository.GetPostByIdAsync(id);
+            if (post == null) return NotFound(new { error = "Lot not found." });
+            if (post.BuyerId == exporterId) return BadRequest(new { error = "You cannot request your own lot." });
+            if (post.Status != "Active" && post.Status != "AVAILABLE" && post.Status != "REQUESTED")
+                return BadRequest(new { error = "This lot is no longer available." });
+
+            // Prevent duplicate requests
+            var existing = await _marketplaceRepository.GetInterestRequestAsync(id, exporterId);
+            if (existing != null)
+                return Conflict(new { error = "You have already sent a request for this lot." });
+
+            // Fetch exporter profile for trust scoring
+            var exporterUser = await _userRepository.GetByIdAsync(new Guid(exporterId));
+
+            // Simple trust score: tenure + successful collaborations (capped at 100)
+            var allTx = await _marketplaceRepository.GetTransactionsByUserIdAsync(exporterId);
+            var successfulCollabs = allTx.Count(t => t.Status == "Completed");
+            var tenureMonths = exporterUser != null
+                ? (int)((DateTime.UtcNow - exporterUser.CreatedAt).TotalDays / 30)
+                : 0;
+            var trustScore = Math.Min(100.0, successfulCollabs * 15.0 + tenureMonths * 0.5
+                + (exporterUser?.IsApproved == true ? 20.0 : 0.0));
+
+            var request = new RubberIntelligence.API.Modules.Marketplace.Models.LotInterestRequest
+            {
+                PostId                   = id,
+                ExporterId               = exporterId,
+                ExporterName             = exporterName,
+                Country                  = exporterUser?.Country,
+                OrganizationType         = exporterUser?.OrganizationType,
+                IsVerified               = exporterUser?.IsApproved ?? false,
+                PlatformTenureMonths     = tenureMonths,
+                SuccessfulCollaborations = successfulCollabs,
+                TrustScore               = trustScore,
+                Status                   = "PENDING",
+                RequestedAt              = DateTime.UtcNow
+            };
+            await _marketplaceRepository.AddInterestRequestAsync(request);
+
+            // Advance post status to REQUESTED so the buyer is notified
+            if (post.Status == "Active" || post.Status == "AVAILABLE")
+            {
+                post.Status = "REQUESTED";
+                await _marketplaceRepository.UpdatePostAsync(post);
+            }
+
+            _logger.LogInformation("[Interest] Exporter {ExporterId} expressed interest in post {PostId}", exporterId, id);
+            return Ok(new { message = "Your request has been sent to the seller.", interestId = request.Id });
+        }
+
+        /// <summary>
+        /// GET /api/Marketplace/posts/{id}/interested-exporters
+        /// Returns trust-scored list of exporters who have requested this lot.
+        /// Only accessible by the Buyer who owns the post.
+        /// </summary>
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpGet("posts/{id}/interested-exporters")]
+        public async Task<IActionResult> GetInterestedExporters(string id)
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
+
+            var post = await _marketplaceRepository.GetPostByIdAsync(id);
+            if (post == null) return NotFound(new { error = "Lot not found." });
+            if (post.BuyerId != buyerId && !User.IsInRole("Admin"))
+                return StatusCode(403, new { error = "Only the lot owner can view interested exporters." });
+
+            var requests = await _marketplaceRepository.GetInterestRequestsByPostIdAsync(id);
+            var result = requests.Select(r => new
+            {
+                interestId               = r.Id,
+                exporterId               = r.ExporterId,
+                exporterName             = r.ExporterName,
+                country                  = r.Country,
+                organizationType         = r.OrganizationType,
+                isVerified               = r.IsVerified,
+                platformTenureMonths     = r.PlatformTenureMonths,
+                successfulCollaborations = r.SuccessfulCollaborations,
+                trustScore               = r.TrustScore,
+                requestedAt              = r.RequestedAt,
+                status                   = r.Status
+            });
+
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// POST /api/Marketplace/posts/{id}/accept-exporter
+        /// Buyer accepts one exporter, creating a PendingInvoice transaction.
+        /// All other pending requests for this lot are marked REJECTED.
+        /// </summary>
+        [Authorize(Roles = "Buyer")]
+        [HttpPost("posts/{id}/accept-exporter")]
+        public async Task<IActionResult> AcceptExporter(string id, [FromBody] Dictionary<string, string> body)
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
+
+            if (!body.TryGetValue("exporterId", out var exporterId) || string.IsNullOrEmpty(exporterId))
+                return BadRequest(new { error = "exporterId is required." });
+
+            // 1. Validate post ownership
+            var post = await _marketplaceRepository.GetPostByIdAsync(id);
+            if (post == null) return NotFound(new { error = "Lot not found." });
+            if (post.BuyerId != buyerId) return StatusCode(403, new { error = "Only the lot owner can accept a request." });
+            if (post.Status != "REQUESTED" && post.Status != "Active" && post.Status != "AVAILABLE")
+                return BadRequest(new { error = "This lot is no longer accepting requests." });
+
+            // 2. Find the accepted interest request
+            var acceptedRequest = await _marketplaceRepository.GetInterestRequestAsync(id, exporterId);
+            if (acceptedRequest == null)
+                return NotFound(new { error = "No interest request found from this exporter." });
+
+            // 3. Create transaction
+            var transaction = new MarketplaceTransaction
+            {
+                PostId        = post.Id,
+                ExporterId    = exporterId,
+                ExporterName  = acceptedRequest.ExporterName,
+                BuyerId       = buyerId,
+                Status        = "PendingInvoice",
+                OfferPrice    = (decimal)post.PricePerKg,
+                LastUpdatedAt  = DateTime.UtcNow
+            };
+            await _marketplaceRepository.CreateTransactionAsync(transaction);
+
+            // 4. Mark post as Sold/Approved
+            post.Status          = "Sold";
+            post.SoldToExporterId = exporterId;
+            await _marketplaceRepository.UpdatePostAsync(post);
+
+            // 5. Mark accepted request as ACCEPTED and all others as REJECTED
+            acceptedRequest.Status = "ACCEPTED";
+            await _marketplaceRepository.UpdateInterestRequestAsync(acceptedRequest);
+
+            var allRequests = await _marketplaceRepository.GetInterestRequestsByPostIdAsync(id);
+            foreach (var req in allRequests.Where(r => r.Id != acceptedRequest.Id && r.Status == "PENDING"))
+            {
+                req.Status = "REJECTED";
+                await _marketplaceRepository.UpdateInterestRequestAsync(req);
+            }
+
+            _logger.LogInformation("[Accept] Buyer {BuyerId} accepted exporter {ExporterId} for post {PostId}, tx {TxId}",
+                buyerId, exporterId, id, transaction.Id);
+
+            return Ok(transaction);
+        }
+
+        /// <summary>
+        /// GET /api/Marketplace/posts/my-requests
+        /// Returns all posts owned by the authenticated buyer that have REQUESTED status.
+        /// Used by the buyer dashboard to surface the notification badge count and
+        /// populate the PendingRequests screen.
+        /// </summary>
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpGet("posts/my-requests")]
+        public async Task<IActionResult> GetMyRequestedPosts()
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
+
+            var posts = await _marketplaceRepository.GetRequestedPostsByBuyerIdAsync(buyerId);
+            return Ok(posts);
+        }
     }
 }

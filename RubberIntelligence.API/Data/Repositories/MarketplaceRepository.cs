@@ -9,6 +9,7 @@ namespace RubberIntelligence.API.Data.Repositories
     {
         private readonly IMongoCollection<SellingPost> _posts;
         private readonly IMongoCollection<MarketplaceTransaction> _transactions;
+        private readonly IMongoCollection<LotInterestRequest> _interestRequests;
 
         public MarketplaceRepository(IOptions<MongoDbSettings> settings)
         {
@@ -16,6 +17,7 @@ namespace RubberIntelligence.API.Data.Repositories
             var mongoDatabase = mongoClient.GetDatabase(settings.Value.DatabaseName);
             _posts = mongoDatabase.GetCollection<SellingPost>("SellingPosts");
             _transactions = mongoDatabase.GetCollection<MarketplaceTransaction>("MarketplaceTransactions");
+            _interestRequests = mongoDatabase.GetCollection<LotInterestRequest>("LotInterestRequests");
         }
 
         // Posts
@@ -26,7 +28,10 @@ namespace RubberIntelligence.API.Data.Repositories
 
         public async Task<List<SellingPost>> GetActivePostsAsync()
         {
-            return await _posts.Find(x => x.Status == "Active").SortByDescending(x => x.CreatedAt).ToListAsync();
+            // Return posts that are available for browsing: legacy "Active" + new status values
+            var filter = Builders<SellingPost>.Filter.In(x => x.Status,
+                new[] { "Active", "AVAILABLE", "REQUESTED" });
+            return await _posts.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync();
         }
 
         public async Task<List<SellingPost>> GetPostsByBuyerIdAsync(string buyerId)
@@ -68,6 +73,41 @@ namespace RubberIntelligence.API.Data.Repositories
         public async Task UpdatePostAsync(SellingPost post)
         {
             await _posts.ReplaceOneAsync(x => x.Id == post.Id, post);
+        }
+
+        // Interest Requests
+        public async Task AddInterestRequestAsync(LotInterestRequest request)
+        {
+            await _interestRequests.InsertOneAsync(request);
+        }
+
+        public async Task<LotInterestRequest?> GetInterestRequestAsync(string postId, string exporterId)
+        {
+            return await _interestRequests
+                .Find(x => x.PostId == postId && x.ExporterId == exporterId)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<List<LotInterestRequest>> GetInterestRequestsByPostIdAsync(string postId)
+        {
+            return await _interestRequests
+                .Find(x => x.PostId == postId)
+                .SortByDescending(x => x.TrustScore)
+                .ToListAsync();
+        }
+
+        public async Task UpdateInterestRequestAsync(LotInterestRequest request)
+        {
+            await _interestRequests.ReplaceOneAsync(x => x.Id == request.Id, request);
+        }
+
+        public async Task<List<SellingPost>> GetRequestedPostsByBuyerIdAsync(string buyerId)
+        {
+            var filter = Builders<SellingPost>.Filter.And(
+                Builders<SellingPost>.Filter.Eq(x => x.BuyerId, buyerId),
+                Builders<SellingPost>.Filter.Eq(x => x.Status, "REQUESTED")
+            );
+            return await _posts.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync();
         }
     }
 }

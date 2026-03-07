@@ -6,5 +6,6 @@ namespace RubberIntelligence.API.Data.Repositories
     {
         Task CreateAsync(Message message);
         Task<List<Message>> GetByLotIdAsync(string lotId);
+        Task<long> GetUnreadCountAsync(string receiverId);
     }
 }
