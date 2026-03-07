@@ -12,7 +12,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
     /// pretrained model covering thousands of invertebrate species.
     /// API docs: https://insect.kindwise.com/docs
     /// </summary>
-    public class InsectIdPestService : IDiseaseDetectionService
+    public class InsectIdPestService : IPestDetectionService
     {
         private readonly HttpClient _httpClient;
         private readonly string? _apiKey;

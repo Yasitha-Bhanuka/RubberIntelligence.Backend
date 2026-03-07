@@ -8,7 +8,7 @@ using RubberIntelligence.API.Modules.DiseaseDetection.Enums;
 
 namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
-    public class OnnxPestDetectionService : IDiseaseDetectionService
+    public class OnnxPestDetectionService : IPestDetectionService
     {
         private readonly string _modelPath;
         private readonly InferenceSession _session;
@@ -120,7 +120,25 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
                 }
             }
 
-            // 5. Map to Result
+            // 5. Confidence Threshold Check (Unrecognized Pest)
+            // If the model is not confident, this insect is likely not one of the 19 trained pests.
+            float confidenceThreshold = 0.55f; // Slightly lower for pests given higher class count
+
+            if (maxScore < confidenceThreshold)
+            {
+                _logger.LogWarning($"[AI] Low confidence pest ({maxScore:P2}). Rejecting as unrecognized.");
+                return new PredictionResponse
+                {
+                    Label = "Unrecognized Pest",
+                    Confidence = maxScore,
+                    Severity = "N/A",
+                    Remedy = "The model could not confidently match this insect to our known rubber plantation pests. It may be harmless or require expert identification.",
+                    IsRejected = true,
+                    RejectionReason = $"Low confidence ({maxScore:P2}). Insect does not match known rubber pests."
+                };
+            }
+
+            // 6. Map to Result
             string predictedLabel = _labels[maxIndex];
             string remedy = GetRemedy(predictedLabel);
 

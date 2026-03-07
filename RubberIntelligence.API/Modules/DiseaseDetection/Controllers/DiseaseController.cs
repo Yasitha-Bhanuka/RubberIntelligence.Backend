@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using MongoDB.Driver.GeoJsonObjectModel;
 using RubberIntelligence.API.Data;
+using RubberIntelligence.API.Data.Repositories;
 using RubberIntelligence.API.Domain.Entities;
 using RubberIntelligence.API.Modules.DiseaseDetection.DTOs;
 using RubberIntelligence.API.Modules.DiseaseDetection.Services;
@@ -17,15 +18,18 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
     {
         private readonly IDiseaseDetectionService _diseaseService;
         private readonly IAlertService _alertService;
+        private readonly IUserRepository _userRepository;
         private readonly AppDbContext _context;
 
         public DiseaseController(
             IDiseaseDetectionService diseaseService,
             IAlertService alertService,
+            IUserRepository userRepository,
             AppDbContext context)
         {
             _diseaseService = diseaseService;
             _alertService = alertService;
+            _userRepository = userRepository;
             _context = context;
         }
 
@@ -39,7 +43,18 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
             var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             Guid userId = Guid.TryParse(userIdString, out var parsed) ? parsed : Guid.Empty;
 
-            // 3. Build GeoJSON location if GPS coordinates are provided
+            // 3. GPS Fallback: if no coordinates in request, use user's plantation location
+            if (!request.Latitude.HasValue || !request.Longitude.HasValue)
+            {
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user?.Location != null)
+                {
+                    request.Latitude = user.Location.Coordinates.Latitude;
+                    request.Longitude = user.Location.Coordinates.Longitude;
+                }
+            }
+
+            // 4. Build GeoJSON location if GPS coordinates are available
             GeoJsonPoint<GeoJson2DGeographicCoordinates>? location = null;
             if (request.Latitude.HasValue && request.Longitude.HasValue)
             {
@@ -49,7 +64,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                         request.Latitude.Value));
             }
 
-            // 4. Save Record to MongoDB for Research Analysis
+            // 5. Save Record to MongoDB for Research Analysis
             var record = new DiseaseRecord
             {
                 Id = Guid.NewGuid(),
@@ -57,6 +72,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                 DiseaseType = request.Type,
                 PredictedLabel = result.Label,
                 Confidence = result.Confidence,
+                Severity = result.Severity,
                 Timestamp = DateTime.UtcNow,
                 ImagePath = request.Image.FileName,
                 Location = location
@@ -64,14 +80,14 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
 
             await _context.DiseaseRecords.InsertOneAsync(record);
 
-            // 5. Trigger proximity alerts for nearby farmers (fire-and-forget style)
-            if (!result.IsRejected && location != null)
+            // 6. Trigger proximity alerts only for Medium/High severity detections
+            if (!result.IsRejected && location != null && IsAlertableSeverity(result.Severity))
             {
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await _alertService.CreateProximityAlertsAsync(record);
+                        await _alertService.CreateProximityAlertsAsync(record, result.Severity);
                     }
                     catch (Exception ex)
                     {
@@ -80,8 +96,17 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                 });
             }
 
-            // 6. Return Result
+            // 7. Return Result
             return Ok(result);
+        }
+
+        /// <summary>
+        /// Only Medium and High severity detections should trigger proximity alerts.
+        /// </summary>
+        private static bool IsAlertableSeverity(string severity)
+        {
+            return severity.Equals("High", StringComparison.OrdinalIgnoreCase)
+                || severity.Equals("Medium", StringComparison.OrdinalIgnoreCase);
         }
 
         [HttpGet("history")]

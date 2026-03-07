@@ -6,7 +6,7 @@ using RubberIntelligence.API.Modules.DiseaseDetection.Enums;
 
 namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
-    public class PlantNetWeedService : IDiseaseDetectionService
+    public class PlantNetWeedService : IWeedDetectionService
     {
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
