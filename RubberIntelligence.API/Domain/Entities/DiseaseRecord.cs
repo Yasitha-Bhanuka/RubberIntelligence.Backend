@@ -32,6 +32,9 @@ namespace RubberIntelligence.API.Domain.Entities
 
         [BsonElement("location")]
         public GeoJsonPoint<GeoJson2DGeographicCoordinates>? Location { get; set; }
+
+        [BsonElement("severity")]
+        public string Severity { get; set; } = "Low";
     }
 }
 

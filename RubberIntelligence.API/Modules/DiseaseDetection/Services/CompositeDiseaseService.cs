@@ -5,15 +5,15 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
 {
     public class CompositeDiseaseService : IDiseaseDetectionService
     {
-        private readonly PlantIdDiseaseService _leafService;
-        private readonly InsectIdPestService _pestService;
-        private readonly PlantNetWeedService _weedService;
+        private readonly ILeafDiseaseService _leafService;
+        private readonly IPestDetectionService _pestService;
+        private readonly IWeedDetectionService _weedService;
         private readonly IImageValidationService _validationService;
 
         public CompositeDiseaseService(
-            PlantIdDiseaseService leafService, 
-            InsectIdPestService pestService, 
-            PlantNetWeedService weedService,
+            ILeafDiseaseService leafService, 
+            IPestDetectionService pestService, 
+            IWeedDetectionService weedService,
             IImageValidationService validationService)
         {
             _leafService = leafService;
@@ -40,19 +40,45 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Services
             }
 
             // 2. Route to correct AI service based on type
+            PredictionResponse result;
             if (request.Type == DiseaseType.Pest)
             {
-                return await _pestService.PredictAsync(request);
+                result = await _pestService.PredictAsync(request);
             }
             else if (request.Type == DiseaseType.Weed)
             {
-                return await _weedService.PredictAsync(request);
+                result = await _weedService.PredictAsync(request);
             }
-            // Default to Leaf Disease
-            else
+            else // Default to Leaf Disease
             {
-                return await _leafService.PredictAsync(request);
+                result = await _leafService.PredictAsync(request);
             }
+
+            // 3. Map to Allowed Classes if using External API
+            // External APIs return free-form strings (e.g. "Bemisia tabaci").
+            // We map these back to our recognized plantation classes 
+            // (e.g. "Whitefly"). If it doesn't match, we reject it.
+            // Weed Detection ALWAYS uses external API now.
+            bool isExternalApi = request.Type == DiseaseType.Weed || !(_leafService is OnnxLeafDiseaseService);
+
+            if (isExternalApi && !result.IsRejected)
+            {
+                var mappedLabel = AllowedClasses.MapLabel(result.Label, request.Type);
+                if (mappedLabel != null)
+                {
+                    result.Label = mappedLabel; // e.g. "Bemisia" -> "Whitefly"
+                }
+                else
+                {
+                    // It's a disease/pest the system doesn't care about (e.g., Apple Scab, House Spider)
+                    result.IsRejected = true;
+                    result.RejectionReason = $"The detected condition/pest '{result.Label}' is not recognized as a standard rubber plantation threat.";
+                    result.Label = "Unrecognized Domain";
+                    result.Severity = "N/A";
+                }
+            }
+
+            return result;
         }
     }
 }

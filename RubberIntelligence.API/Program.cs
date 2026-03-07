@@ -64,13 +64,27 @@ builder.Services.AddScoped<IMarketplaceRepository, MarketplaceRepository>();
 builder.Services.AddTransient<DbSeeder>();
 
 // Register Module Services
-// Register Disease Detection Strategy — API-based services
-builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>(); // Type-Client
-builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantIdDiseaseService>(); // Plant.id API
-builder.Services.AddHttpClient<RubberIntelligence.API.Modules.DiseaseDetection.Services.InsectIdPestService>(); // Insect.id API
-builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantIdDiseaseService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.InsectIdPestService>();
-builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>();
+
+// Register Disease Detection Strategy (ONNX vs API)
+var diseaseStrategy = Environment.GetEnvironmentVariable("DISEASE_DETECTION_STRATEGY") 
+                        ?? builder.Configuration.GetValue<string>("DiseaseDetectionStrategy", "ONNX");
+
+if (diseaseStrategy?.ToUpperInvariant() == "API")
+{
+    // Register External APIs for Leaf and Pest
+    builder.Services.AddScoped<ILeafDiseaseService, RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantIdDiseaseService>();
+    builder.Services.AddScoped<IPestDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.InsectIdPestService>();
+}
+else
+{
+    // Register Local ONNX Models for Leaf and Pest
+    builder.Services.AddSingleton<ILeafDiseaseService, RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxLeafDiseaseService>();
+    builder.Services.AddSingleton<IPestDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.OnnxPestDetectionService>();
+}
+
+// ALWAYS use PlantNet API for Weed Detection (No dedicated ONNX model exists)
+builder.Services.AddScoped<IWeedDetectionService, RubberIntelligence.API.Modules.DiseaseDetection.Services.PlantNetWeedService>();
+
 // Register Image Validation Services
 builder.Services.AddScoped<RubberIntelligence.API.Modules.DiseaseDetection.Services.ImageQualityService>();
 builder.Services.AddSingleton<RubberIntelligence.API.Modules.DiseaseDetection.Services.ContentVerificationService>();
