@@ -8,6 +8,7 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
     /// Created when exporter clicks "Request Purchase" on a lot.
     /// Buyer reviews and accepts one exporter, which creates a MarketplaceTransaction.
     /// </summary>
+    [BsonIgnoreExtraElements]
     public class LotInterestRequest
     {
         [BsonId]
