@@ -92,7 +92,7 @@ namespace RubberIntelligence.API.Data.Repositories
         {
             return await _interestRequests
                 .Find(x => x.PostId == postId)
-                .SortByDescending(x => x.TrustScore)
+                .SortByDescending(x => x.RequestedAt)
                 .ToListAsync();
         }
 

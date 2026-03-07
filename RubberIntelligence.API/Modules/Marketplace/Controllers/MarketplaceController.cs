@@ -143,7 +143,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 BuyerId = post.BuyerId,
                 Status = "PendingInvoice", // Changed from Completed
                 OfferPrice = (decimal)post.PricePerKg, // Direct buy at listed price
-                LastUpdatedAt = DateTime.UtcNow
+                LastUpdatedAt = DateTime.UtcNow,
+                SecretRequestId = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLower()
             };
             await _marketplaceRepository.CreateTransactionAsync(transaction);
 
@@ -282,7 +283,7 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 if (dppClassification == "CONFIDENTIAL")
                 {
                     // Encrypt with PBKDF2(SecretRequestId, transactionId) → AES-256-CBC
-                    var (cipherB64, ivB64) = _zkEncryptionService.Encrypt(
+                    var (cipherB64, ivB64) = _zkEncryptionService.EncryptDocumentBankStatement(
                         rawFileBytes, transaction.SecretRequestId, transaction.Id);
                     transaction.ConditionalVault    = cipherB64;
                     transaction.ConditionalVaultIv  = ivB64;
@@ -358,6 +359,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 }
             });
         }
+
+
 
         // ── GET /api/marketplace/buyer-history/{buyerId} ─────────────────
         /// <summary>
@@ -764,15 +767,6 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             // Fetch exporter profile for trust scoring
             var exporterUser = await _userRepository.GetByIdAsync(new Guid(exporterId));
 
-            // Simple trust score: tenure + successful collaborations (capped at 100)
-            var allTx = await _marketplaceRepository.GetTransactionsByUserIdAsync(exporterId);
-            var successfulCollabs = allTx.Count(t => t.Status == "Completed");
-            var tenureMonths = exporterUser != null
-                ? (int)((DateTime.UtcNow - exporterUser.CreatedAt).TotalDays / 30)
-                : 0;
-            var trustScore = Math.Min(100.0, successfulCollabs * 15.0 + tenureMonths * 0.5
-                + (exporterUser?.IsApproved == true ? 20.0 : 0.0));
-
             var request = new RubberIntelligence.API.Modules.Marketplace.Models.LotInterestRequest
             {
                 PostId                   = id,
@@ -781,9 +775,6 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 Country                  = exporterUser?.Country,
                 OrganizationType         = exporterUser?.OrganizationType,
                 IsVerified               = exporterUser?.IsApproved ?? false,
-                PlatformTenureMonths     = tenureMonths,
-                SuccessfulCollaborations = successfulCollabs,
-                TrustScore               = trustScore,
                 Status                   = "PENDING",
                 RequestedAt              = DateTime.UtcNow
             };
@@ -826,11 +817,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 country                  = r.Country,
                 organizationType         = r.OrganizationType,
                 isVerified               = r.IsVerified,
-                platformTenureMonths     = r.PlatformTenureMonths,
-                successfulCollaborations = r.SuccessfulCollaborations,
-                trustScore               = r.TrustScore,
-                requestedAt              = r.RequestedAt,
-                status                   = r.Status
+                status                   = r.Status,
+                requestedAt              = r.RequestedAt
             });
 
             return Ok(result);
@@ -1122,8 +1110,7 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 id = r.Id,
                 postId = r.PostId,
                 status = r.Status,
-                requestedAt = r.RequestedAt,
-                trustScore = r.TrustScore
+                requestedAt = r.RequestedAt
             }));
         }
     }

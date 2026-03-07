@@ -33,18 +33,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         [BsonElement("isVerified")]
         public bool IsVerified { get; set; }
 
-        [BsonElement("platformTenureMonths")]
-        public int PlatformTenureMonths { get; set; }
-
-        [BsonElement("successfulCollaborations")]
-        public int SuccessfulCollaborations { get; set; }
-
-        [BsonElement("trustScore")]
-        public double TrustScore { get; set; }
-
-        /// <summary>PENDING | ACCEPTED | REJECTED</summary>
         [BsonElement("status")]
-        public string Status { get; set; } = "PENDING";
+        public string Status { get; set; } = "PENDING"; // PENDING, ACCEPTED, REJECTED
 
         [BsonElement("requestedAt")]
         public DateTime RequestedAt { get; set; } = DateTime.UtcNow;

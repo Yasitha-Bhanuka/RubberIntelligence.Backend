@@ -48,7 +48,7 @@ namespace RubberIntelligence.API.Modules.Marketplace.Services
         /// Returns (ciphertextBase64, ivBase64).  The IV is derived deterministically
         /// from the same KDF so the client only needs the SecretRequestId to decrypt.
         /// </summary>
-        public (string CiphertextBase64, string IvBase64) Encrypt(
+        public (string CiphertextBase64, string IvBase64) EncryptDocumentBankStatement(
             byte[] fileBytes, string secretRequestId, string transactionId)
         {
             var saltBytes = Encoding.UTF8.GetBytes(transactionId);
