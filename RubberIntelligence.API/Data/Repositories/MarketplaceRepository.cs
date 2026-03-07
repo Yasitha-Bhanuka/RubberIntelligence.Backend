@@ -109,5 +109,13 @@ namespace RubberIntelligence.API.Data.Repositories
             );
             return await _posts.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync();
         }
+
+        public async Task<List<LotInterestRequest>> GetInterestRequestsByExporterIdAsync(string exporterId)
+        {
+            return await _interestRequests
+                .Find(x => x.ExporterId == exporterId)
+                .SortByDescending(x => x.RequestedAt)
+                .ToListAsync();
+        }
     }
 }

@@ -60,6 +60,7 @@ builder.Services.Configure<AlertSettings>(builder.Configuration.GetSection(Alert
 builder.Services.AddSingleton<AppDbContext>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IDppRepository, DppRepository>();
+builder.Services.AddScoped<IDocumentAccessGrantRepository, DocumentAccessGrantRepository>();
 builder.Services.AddScoped<IMarketplaceRepository, MarketplaceRepository>();
 builder.Services.AddTransient<DbSeeder>();
 
@@ -106,6 +107,7 @@ builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.DppEncryp
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.ExporterContextService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Dpp.Services.MessageService>();
 builder.Services.AddScoped<RubberIntelligence.API.Modules.Marketplace.Services.BuyerHistoryService>(); // Buyer history analytics
+builder.Services.AddScoped<RubberIntelligence.API.Modules.Marketplace.Services.ZeroKnowledgeEncryptionService>(); // PBKDF2-AES-256-CBC conditional vault
 builder.Services.AddScoped<RubberIntelligence.API.Data.Repositories.IMessageRepository, RubberIntelligence.API.Data.Repositories.MessageRepository>(); // Message persistence
 
 // Register Infrastructure Services

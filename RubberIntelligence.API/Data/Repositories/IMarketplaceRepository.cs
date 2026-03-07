@@ -23,5 +23,6 @@ namespace RubberIntelligence.API.Data.Repositories
         Task<List<LotInterestRequest>> GetInterestRequestsByPostIdAsync(string postId);
         Task UpdateInterestRequestAsync(LotInterestRequest request);
         Task<List<SellingPost>> GetRequestedPostsByBuyerIdAsync(string buyerId);
+        Task<List<LotInterestRequest>> GetInterestRequestsByExporterIdAsync(string exporterId);
     }
 }

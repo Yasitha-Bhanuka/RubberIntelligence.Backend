@@ -8,6 +8,7 @@ using RubberIntelligence.API.Modules.Dpp.Services;
 using RubberIntelligence.API.Modules.Dpp.DTOs;
 using RubberIntelligence.API.Domain.Entities;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace RubberIntelligence.API.Modules.Marketplace.Controllers
 {
@@ -25,6 +26,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         private readonly ILogger<MarketplaceController> _logger;
         private readonly IDppRepository _dppRepository;
         private readonly FieldEncryptionService _fieldEncryptionService;
+        private readonly ZeroKnowledgeEncryptionService _zkEncryptionService;
+        private readonly DppService _dppService;
 
         public MarketplaceController(
             IMarketplaceRepository marketplaceRepository,
@@ -36,7 +39,9 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             IWebHostEnvironment env,
             ILogger<MarketplaceController> logger,
             IDppRepository dppRepository,
-            FieldEncryptionService fieldEncryptionService)
+            FieldEncryptionService fieldEncryptionService,
+            ZeroKnowledgeEncryptionService zkEncryptionService,
+            DppService dppService)
         {
             _marketplaceRepository  = marketplaceRepository;
             _userRepository         = userRepository;
@@ -48,6 +53,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             _logger                 = logger;
             _dppRepository          = dppRepository;
             _fieldEncryptionService = fieldEncryptionService;
+            _zkEncryptionService    = zkEncryptionService;
+            _dppService             = dppService;
         }
 
         // ==========================================
@@ -118,6 +125,9 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             var exporterName = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "Unknown Exporter";
 
+            if (string.IsNullOrWhiteSpace(exporterId))
+                return Unauthorized(new { error = "Invalid token: missing exporter id claim." });
+
             // 1. Get Post
             var post = await _marketplaceRepository.GetPostByIdAsync(id);
             if (post == null) return NotFound("Post not found");
@@ -150,8 +160,19 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         public async Task<IActionResult> GetMyTransactions()
         {
             var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            var transactions = await _marketplaceRepository.GetTransactionsByUserIdAsync(userId);
-            return Ok(transactions);
+            if (string.IsNullOrWhiteSpace(userId))
+                return Unauthorized(new { error = "Invalid token: missing user id claim." });
+
+            try
+            {
+                var transactions = await _marketplaceRepository.GetTransactionsByUserIdAsync(userId);
+                return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Marketplace] Failed to fetch transactions for user {UserId}", userId);
+                return StatusCode(500, new { error = "Failed to fetch transactions." });
+            }
         }
 
         // ==========================================
@@ -245,7 +266,51 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 classifyText = string.Empty; // Eagerly clear — values may contain PII
             }
 
-            // 6. Persist to MongoDB
+            // 6a. Conditional Zero-Knowledge Vault — PBKDF2-AES-256-CBC file-level encryption
+            //     Password = transaction.SecretRequestId  (known only to the exporter)
+            //     Salt     = transaction.Id               (lot-specific)
+            if (!string.IsNullOrEmpty(transaction.SecretRequestId))
+            {
+                byte[] rawFileBytes;
+                using (var rawStream = file.OpenReadStream())
+                using (var ms = new System.IO.MemoryStream())
+                {
+                    await rawStream.CopyToAsync(ms);
+                    rawFileBytes = ms.ToArray();
+                }
+
+                if (dppClassification == "CONFIDENTIAL")
+                {
+                    // Encrypt with PBKDF2(SecretRequestId, transactionId) → AES-256-CBC
+                    var (cipherB64, ivB64) = _zkEncryptionService.Encrypt(
+                        rawFileBytes, transaction.SecretRequestId, transaction.Id);
+                    transaction.ConditionalVault    = cipherB64;
+                    transaction.ConditionalVaultIv  = ivB64;
+                    _logger.LogInformation(
+                        "[Invoice] CONFIDENTIAL vault encrypted with PBKDF2 for transaction {TxId}", id);
+                }
+                else
+                {
+                    // PUBLIC — store raw bytes as Base64; no key needed to read
+                    transaction.ConditionalVault   = Convert.ToBase64String(rawFileBytes);
+                    transaction.ConditionalVaultIv = string.Empty;
+                    _logger.LogInformation(
+                        "[Invoice] PUBLIC vault stored as Base64 for transaction {TxId}", id);
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[Invoice] No SecretRequestId on transaction {TxId} — ConditionalVault skipped.\n" +
+                    "This transaction was created before the zero-knowledge workflow was activated.", id);
+            }
+
+            // 6b. Zero-Knowledge guarantee: permanently nullify the SecretRequestId
+            //     so it is NEVER stored alongside the ciphertext in the database.
+            //     The exporter must have already claimed it via GET /transactions/{id}/my-secret.
+            transaction.SecretRequestId = null;
+
+            // 6c. Persist to MongoDB
             transaction.DppInvoicePath     = encryptedPath;
             transaction.DppClassification  = dppClassification;
             transaction.EncryptionMetadata = encryptionMetadata;
@@ -798,25 +863,29 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             if (acceptedRequest == null)
                 return NotFound(new { error = "No interest request found from this exporter." });
 
-            // 3. Create transaction
+            // 3. Generate one-time SecretRequestId — given ONLY to the exporter, NEVER stored in plaintext again
+            var secretRequestId = Guid.NewGuid().ToString("N"); // 32-char hex, no hyphens
+
+            // 4. Create transaction (SecretRequestId stored here so UploadInvoice can use it for PBKDF2)
             var transaction = new MarketplaceTransaction
             {
-                PostId        = post.Id,
-                ExporterId    = exporterId,
-                ExporterName  = acceptedRequest.ExporterName,
-                BuyerId       = buyerId,
-                Status        = "PendingInvoice",
-                OfferPrice    = (decimal)post.PricePerKg,
-                LastUpdatedAt  = DateTime.UtcNow
+                PostId          = post.Id,
+                ExporterId      = exporterId,
+                ExporterName    = acceptedRequest.ExporterName,
+                BuyerId         = buyerId,
+                Status          = "PendingInvoice",
+                OfferPrice      = (decimal)post.PricePerKg,
+                LastUpdatedAt   = DateTime.UtcNow,
+                SecretRequestId = secretRequestId
             };
             await _marketplaceRepository.CreateTransactionAsync(transaction);
 
-            // 4. Mark post as Sold/Approved
+            // 5. Mark post as Sold/Approved
             post.Status          = "Sold";
             post.SoldToExporterId = exporterId;
             await _marketplaceRepository.UpdatePostAsync(post);
 
-            // 5. Mark accepted request as ACCEPTED and all others as REJECTED
+            // 6. Mark accepted request as ACCEPTED and all others as REJECTED
             acceptedRequest.Status = "ACCEPTED";
             await _marketplaceRepository.UpdateInterestRequestAsync(acceptedRequest);
 
@@ -830,7 +899,58 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             _logger.LogInformation("[Accept] Buyer {BuyerId} accepted exporter {ExporterId} for post {PostId}, tx {TxId}",
                 buyerId, exporterId, id, transaction.Id);
 
-            return Ok(transaction);
+            // Return the transaction WITHOUT the SecretRequestId.
+            // The exporter claims it separately via GET /transactions/{id}/my-secret.
+            return Ok(new
+            {
+                transaction.Id,
+                transaction.PostId,
+                transaction.ExporterId,
+                transaction.ExporterName,
+                transaction.BuyerId,
+                transaction.Status,
+                transaction.OfferPrice,
+                transaction.LastUpdatedAt
+            });
+        }
+
+        // ==========================================
+        // Exporter Secret Claim (Zero-Knowledge Key Delivery)
+        // ==========================================
+
+        /// <summary>
+        /// GET /api/Marketplace/transactions/{id}/my-secret
+        ///
+        /// One-time key delivery: Only the purchasing Exporter (ReBAC) can call this.
+        /// Returns the SecretRequestId needed for client-side PBKDF2-AES-256-CBC decryption.
+        /// After the Buyer uploads the invoice, the SecretRequestId is permanently nullified
+        /// in the database — so the Exporter MUST claim it before or shortly after upload.
+        /// If the key has been consumed (nullified post-encryption), returns 410 Gone.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("transactions/{id}/my-secret")]
+        public async Task<IActionResult> ClaimSecret(string id)
+        {
+            var callerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(callerId)) return Unauthorized();
+
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null)
+                return NotFound(new { error = "Transaction not found." });
+
+            // ReBAC: only the purchasing exporter
+            if (transaction.ExporterId != callerId && !User.IsInRole("Admin"))
+                return StatusCode(403, new { error = "Access denied: only the purchasing exporter may claim the decryption key." });
+
+            // If SecretRequestId has been nullified (post-encryption), it's gone forever
+            if (string.IsNullOrEmpty(transaction.SecretRequestId))
+                return StatusCode(410, new { error = "Decryption key has already been consumed after encryption. It cannot be recovered." });
+
+            _logger.LogInformation(
+                "[ClaimSecret] Exporter {ExporterId} claimed SecretRequestId for transaction {TxId}",
+                callerId, id);
+
+            return Ok(new { secretRequestId = transaction.SecretRequestId });
         }
 
         /// <summary>
@@ -848,6 +968,163 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
 
             var posts = await _marketplaceRepository.GetRequestedPostsByBuyerIdAsync(buyerId);
             return Ok(posts);
+        }
+
+        // ==========================================
+        // Dual-Layer DPP (Zero-Knowledge Delivery)
+        // ==========================================
+
+        /// <summary>
+        /// GET /api/Marketplace/transactions/{id}/dual-layer-dpp
+        ///
+        /// ReBAC: Only the purchasing exporter (JWT sub == ExporterId) may call this.
+        ///
+        /// Returns:
+        ///   publicSummary  — lot metadata + SHA-256 DppHash (safe to display / embed in QR)
+        ///   documentStatus — "CONFIDENTIAL" | "PUBLIC" | "NOT_UPLOADED"
+        ///   documentPayload — Base64 ciphertext (CONFIDENTIAL) or Base64 plaintext (PUBLIC)
+        ///   ivBase64        — AES IV for client-side PBKDF2 verification (informational)
+        ///
+        /// The SecretRequestId is NEVER included in this response.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("transactions/{id}/dual-layer-dpp")]
+        public async Task<IActionResult> GetDualLayerDpp(string id)
+        {
+            var callerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(callerId)) return Unauthorized();
+
+            // 1. Load transaction
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null)
+                return NotFound(new { error = "Transaction not found." });
+
+            // 2. ReBAC — only the purchasing exporter
+            if (transaction.ExporterId != callerId && !User.IsInRole("Admin"))
+                return StatusCode(403, new { error = "Access denied: only the purchasing exporter may view this DPP." });
+
+            // 3. Resolve or auto-generate the DPP record for the public summary
+            string dppHash = string.Empty;
+            string rubberGrade = string.Empty;
+            double quantity = 0;
+
+            try
+            {
+                var dpp = await _dppRepository.GetDppByLotIdAsync(id);
+                if (dpp == null)
+                {
+                    // Auto-generate from extracted invoice fields if available
+                    var fields = await _dppRepository.GetExtractedFieldsByLotIdAsync(id);
+                    if (fields.Count > 0)
+                    {
+                        dpp = await _dppService.GenerateDpp(id);
+                    }
+                }
+
+                if (dpp != null)
+                {
+                    dppHash    = dpp.DppHash ?? string.Empty;
+                    rubberGrade = dpp.RubberGrade ?? string.Empty;
+                    quantity   = dpp.Quantity;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DualLayerDpp] Could not resolve DPP for transaction {TxId}", id);
+                // Non-fatal: continue with empty hash
+            }
+
+            // 4. Build public summary
+            var publicSummary = new
+            {
+                lotId       = id,
+                rubberGrade,
+                quantity,
+                dppHash
+            };
+
+            // 5. Determine document status and payload
+            var documentStatus  = string.IsNullOrEmpty(transaction.ConditionalVault)
+                ? "NOT_UPLOADED"
+                : (transaction.DppClassification ?? "PUBLIC");
+
+            return Ok(new
+            {
+                publicSummary,
+                documentStatus,
+                documentPayload = transaction.ConditionalVault ?? string.Empty,
+                ivBase64        = transaction.ConditionalVaultIv ?? string.Empty
+            });
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // POST /api/Marketplace/transactions/{id}/exporter-docs
+        // Exporter uploads their own supporting documents after lot confirmation
+        // ─────────────────────────────────────────────────────────────────
+        [Authorize(Roles = "Exporter")]
+        [HttpPost("transactions/{id}/exporter-docs")]
+        public async Task<IActionResult> UploadExporterDocs(string id, IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest(new { error = "No file provided." });
+
+            var callerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(callerId)) return Unauthorized();
+
+            var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
+            if (transaction == null)
+                return NotFound(new { error = "Transaction not found." });
+
+            if (transaction.ExporterId != callerId)
+                return StatusCode(403, new { error = "Access denied: only the accepted exporter may upload documents for this transaction." });
+
+            // Save file to disk
+            var docsDir = Path.Combine(Directory.GetCurrentDirectory(), "App_Data", "ExporterDocs");
+            Directory.CreateDirectory(docsDir);
+            var ext = Path.GetExtension(file.FileName);
+            var storedName = $"{id}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{ext}";
+            var filePath = Path.Combine(docsDir, storedName);
+
+            using (var stream = System.IO.File.Create(filePath))
+                await file.CopyToAsync(stream);
+
+            transaction.ExporterDocsPath = filePath;
+            transaction.ExporterDocsOriginalName = file.FileName;
+            transaction.ExporterDocsUploadedAt = DateTime.UtcNow;
+            transaction.LastUpdatedAt = DateTime.UtcNow;
+            await _marketplaceRepository.UpdateTransactionAsync(transaction);
+
+            _logger.LogInformation("[ExporterDocs] Exporter {ExporterId} uploaded docs for transaction {TxId}", callerId, id);
+
+            return Ok(new
+            {
+                message = "Documents uploaded successfully.",
+                fileName = file.FileName,
+                uploadedAt = transaction.ExporterDocsUploadedAt,
+                transactionId = id
+            });
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // GET /api/Marketplace/posts/my-interest-requests
+        // Returns all interest requests submitted by the calling Exporter
+        // ─────────────────────────────────────────────────────────────────
+        [Authorize(Roles = "Exporter")]
+        [HttpGet("posts/my-interest-requests")]
+        public async Task<IActionResult> GetMyInterestRequests()
+        {
+            var callerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(callerId)) return Unauthorized();
+
+            var requests = await _marketplaceRepository.GetInterestRequestsByExporterIdAsync(callerId);
+            return Ok(requests.Select(r => new
+            {
+                id = r.Id,
+                postId = r.PostId,
+                status = r.Status,
+                requestedAt = r.RequestedAt,
+                trustScore = r.TrustScore
+            }));
         }
     }
 }

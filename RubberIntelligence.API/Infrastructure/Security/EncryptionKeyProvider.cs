@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
 
@@ -28,6 +29,10 @@ namespace RubberIntelligence.API.Infrastructure.Security
         private readonly byte[] _hmacKey;
         private readonly int    _keyVersion;
         private readonly ILogger<EncryptionKeyProvider> _logger;
+        private readonly IWebHostEnvironment _env;
+        
+        // RSA-2048 key pair for AES key wrapping (lazy-loaded)
+        private RSA? _rsaProvider;
 
         public int CurrentKeyVersion => _keyVersion;
 
@@ -38,6 +43,7 @@ namespace RubberIntelligence.API.Infrastructure.Security
             ILogger<EncryptionKeyProvider> logger)
         {
             _logger     = logger;
+            _env        = env;
             _keyVersion = opts.Value.CurrentKeyVersion;
 
             bool isDev = env.IsDevelopment();
@@ -72,6 +78,53 @@ namespace RubberIntelligence.API.Infrastructure.Security
 
         /// <summary>Returns the HMAC key for blind-index generation (≥ 32 bytes).</summary>
         public byte[] GetHmacKey()      => _hmacKey;
+
+        /// <summary>
+        /// Encrypts an AES key using RSA-2048 OAEP with SHA-256.
+        /// Returns Base64-encoded ciphertext for storage in DppDocument.EncryptedAesKey.
+        /// </summary>
+        public string EncryptAesKeyWithRsa(byte[] aesKey)
+        {
+            var rsa = GetOrCreateRsaProvider();
+            var encrypted = rsa.Encrypt(aesKey, RSAEncryptionPadding.OaepSHA256);
+            return Convert.ToBase64String(encrypted);
+        }
+
+        /// <summary>
+        /// Decrypts an RSA-encrypted AES key.
+        /// Used when admin/system needs to decrypt files with the master RSA private key.
+        /// </summary>
+        public byte[] DecryptAesKeyWithRsa(string encryptedAesKeyBase64)
+        {
+            var rsa = GetOrCreateRsaProvider();
+            var encryptedBytes = Convert.FromBase64String(encryptedAesKeyBase64);
+            return rsa.Decrypt(encryptedBytes, RSAEncryptionPadding.OaepSHA256);
+        }
+
+        /// <summary>
+        /// Lazy-loads or creates RSA-2048 provider for AES key wrapping.
+        /// In production, load from Azure Key Vault or env var.
+        /// In development, generates ephemeral key pair.
+        /// </summary>
+        private RSA GetOrCreateRsaProvider()
+        {
+            if (_rsaProvider != null)
+                return _rsaProvider;
+
+            // TODO: In production, load RSA keys from Azure Key Vault or env var
+            // For now, generate ephemeral RSA-2048 key pair in dev
+            _rsaProvider = RSA.Create(2048);
+
+            if (_env.IsDevelopment())
+            {
+                _logger.LogWarning(
+                    "[Security][DEV ONLY] RSA-2048 key pair generated in-memory. " +
+                    "This key is NOT persistent across restarts. " +
+                    "In production, load from Azure Key Vault.");
+            }
+
+            return _rsaProvider;
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         private byte[] ResolveKey(

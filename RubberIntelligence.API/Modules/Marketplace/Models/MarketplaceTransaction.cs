@@ -43,6 +43,18 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         [BsonElement("dppDocumentId")]
         public string? DppDocumentId { get; set; }
 
+        // ── Conditional Zero-Knowledge Vault ───────────────────────────
+        // Populated by UploadInvoice after PBKDF2-AES-256-CBC encryption.
+        // If DppClassification == "CONFIDENTIAL", this is the AES ciphertext (Base64).
+        // If DppClassification == "PUBLIC", this is the raw file bytes (Base64).
+        // The SecretRequestId password is NEVER stored here — client decrypts locally.
+
+        [BsonElement("conditionalVault")]
+        public string? ConditionalVault { get; set; }
+
+        [BsonElement("conditionalVaultIv")]
+        public string? ConditionalVaultIv { get; set; }
+
         /// <summary>
         /// Safe display fields extracted from the invoice by Gemini.
         /// Confidential field values are stored as null; ciphertexts live in ExtractedField records.
@@ -67,6 +79,19 @@ namespace RubberIntelligence.API.Modules.Marketplace.Models
         /// </summary>
         [BsonElement("qirFields")]
         public Dictionary<string, string?>? QirFields { get; set; }
+
+        // ── Exporter-Uploaded Supporting Documents ──────────────────────
+        // The accepted exporter can upload their own documents (shipping certs, origin docs, etc.)
+        // after the lot is confirmed. These are stored separately from the buyer's invoice.
+
+        [BsonElement("exporterDocsPath")]
+        public string? ExporterDocsPath { get; set; }
+
+        [BsonElement("exporterDocsOriginalName")]
+        public string? ExporterDocsOriginalName { get; set; }
+
+        [BsonElement("exporterDocsUploadedAt")]
+        public DateTime? ExporterDocsUploadedAt { get; set; }
     }
 
     public class TransactionMessage
