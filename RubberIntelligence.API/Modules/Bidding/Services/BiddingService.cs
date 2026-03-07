@@ -32,15 +32,7 @@ namespace RubberIntelligence.API.Modules.Bidding.Services
             
             foreach (var auction in auctions)
             {
-                // Auto-fix any misconfigured old dummy data or timezone 
-                // mismatches to be strictly 1-hour auctions counting down from now.
-                if (auction.EndTime > auction.StartTime.AddHours(1.5))
-                {
-                    auction.StartTime = DateTime.UtcNow;
-                    auction.EndTime = DateTime.UtcNow.AddHours(1);
-                    await _biddingRepository.UpdateAuctionAsync(auction);
-                }
-
+                // Removed the old auto-fix that restricted auctions to 1 hour
                 if (auction.EndTime < DateTime.UtcNow)
                 {
                     auction.Status = "Closed";
@@ -88,7 +80,7 @@ namespace RubberIntelligence.API.Modules.Bidding.Services
                 SellerId = sellerId,
                 SellerName = sellerName,
                 StartTime = DateTime.UtcNow,
-                EndTime = DateTime.UtcNow.AddHours(1), // Enforce strictly 1 hour in backend
+                EndTime = createAuctionDto.EndTime > DateTime.UtcNow ? createAuctionDto.EndTime : DateTime.UtcNow.AddHours(1), // Use provided EndTime, default to 1h if invalid
                 Status = "Active",
                 LotId = createAuctionDto.LotId,
                 IsNftSecured = true
