@@ -568,6 +568,5 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 return StatusCode(500, new { error = "Verification failed", details = ex.Message });
             }
         }
-
     }
 }
