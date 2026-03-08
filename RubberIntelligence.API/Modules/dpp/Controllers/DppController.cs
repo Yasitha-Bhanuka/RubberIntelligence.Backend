@@ -548,13 +548,19 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
         /// <summary>
         /// Re-computes the SHA-256 hash over the stored DPP and compares it with
         /// the persisted DppHash. Returns { isValid, recalculatedHash, storedHash }.
+        /// Optional expectedLotId enforces 1-to-1 matching between QR and viewed lot.
         /// </summary>
         [Authorize(Roles = "Buyer,Exporter,Admin")]
         [HttpGet("verify/{lotId}")]
-        public async Task<IActionResult> VerifyDpp(string lotId)
+        public async Task<IActionResult> VerifyDpp(string lotId, [FromQuery] string? expectedLotId = null)
         {
             try
             {
+                if (!string.IsNullOrWhiteSpace(expectedLotId) && !string.Equals(lotId, expectedLotId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new { error = $"Lot Mismatch: You scanned a QR code for Lot {lotId.Substring(0, Math.Min(lotId.Length, 8))}…, but you are verifying Lot {expectedLotId.Substring(0, Math.Min(expectedLotId.Length, 8))}…" });
+                }
+
                 var result = await _dppService.VerifyDppHash(lotId);
                 return Ok(result);
             }
