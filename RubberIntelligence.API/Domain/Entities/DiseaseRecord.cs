@@ -35,9 +35,6 @@ namespace RubberIntelligence.API.Domain.Entities
 
         [BsonElement("severity")]
         public string Severity { get; set; } = "Low";
-
-        [BsonElement("isRejected")]
-        public bool IsRejected { get; set; } = false;
     }
 }
 

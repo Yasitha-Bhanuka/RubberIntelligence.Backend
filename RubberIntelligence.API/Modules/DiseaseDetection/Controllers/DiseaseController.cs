@@ -75,8 +75,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                 Severity = result.Severity,
                 Timestamp = DateTime.UtcNow,
                 ImagePath = request.Image.FileName,
-                Location = location,
-                IsRejected = result.IsRejected
+                Location = location
             };
 
             await _context.DiseaseRecords.InsertOneAsync(record);
@@ -119,10 +118,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                 return Unauthorized();
             }
 
-            var filter = Builders<DiseaseRecord>.Filter.And(
-                Builders<DiseaseRecord>.Filter.Eq(r => r.UserId, userId),
-                Builders<DiseaseRecord>.Filter.Eq(r => r.IsRejected, false)
-            );
+            var filter = Builders<DiseaseRecord>.Filter.Eq(r => r.UserId, userId);
             var history = await _context.DiseaseRecords
                                         .Find(filter)
                                         .SortByDescending(r => r.Timestamp)
@@ -141,8 +137,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
             var since = DateTime.UtcNow.AddDays(-days);
             var filter = Builders<DiseaseRecord>.Filter.And(
                 Builders<DiseaseRecord>.Filter.Gte(r => r.Timestamp, since),
-                Builders<DiseaseRecord>.Filter.Ne(r => r.Location, null),
-                Builders<DiseaseRecord>.Filter.Eq(r => r.IsRejected, false)
+                Builders<DiseaseRecord>.Filter.Ne(r => r.Location, null)
             );
 
             var detections = await _context.DiseaseRecords
