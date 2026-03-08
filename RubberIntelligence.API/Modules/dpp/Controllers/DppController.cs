@@ -568,5 +568,42 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 return StatusCode(500, new { error = "Verification failed", details = ex.Message });
             }
         }
+
+        [AllowAnonymous]
+        [HttpGet("debug-verify/{lotId}")]
+        public async Task<IActionResult> DebugVerify(string lotId)
+        {
+            var dpp = await _dppRepository.GetDppByLotIdAsync(lotId);
+            if (dpp == null) return NotFound("DPP not found");
+
+            var snapshot = new RubberIntelligence.API.Modules.Dpp.Models.DigitalProductPassport
+            {
+                Id                     = dpp.Id,
+                LotId                  = dpp.LotId,
+                RubberGrade            = dpp.RubberGrade,
+                Quantity               = dpp.Quantity,
+                DispatchDetails        = dpp.DispatchDetails,
+                ConfidentialDataExists = dpp.ConfidentialDataExists,
+                LifecycleState         = "GENERATED",    
+                DppHash                = string.Empty,   
+                CreatedAt              = dpp.CreatedAt   
+            };
+
+            var json = System.Text.Json.JsonSerializer.Serialize(snapshot, new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            });
+
+            var recalculated = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json));
+            return Ok(new 
+            { 
+                storedHash = dpp.DppHash,
+                recalculatedHash = Convert.ToHexString(recalculated).ToLowerInvariant(),
+                match = dpp.DppHash == Convert.ToHexString(recalculated).ToLowerInvariant(),
+                exactJson = json,
+                createdAtRaw = dpp.CreatedAt.ToString("o"),
+                createdAtTicks = dpp.CreatedAt.Ticks
+            });
+        }
     }
 }
