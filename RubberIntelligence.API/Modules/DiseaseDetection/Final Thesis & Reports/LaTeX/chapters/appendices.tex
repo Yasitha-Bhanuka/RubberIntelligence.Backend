@@ -1,0 +1,210 @@
+% ════════════════════════════════════════════════════════════════
+%  APPENDICES
+% ════════════════════════════════════════════════════════════════
+\appendix
+
+\chapter{Key Code Snippets}
+
+\section{Composite Disease Service --- Strategy Routing}
+
+\begin{lstlisting}[language=C,caption={CompositeDiseaseService.cs --- Strategy routing and class restriction},label={lst:composite}]
+public async Task<PredictionResponse> PredictAsync(PredictionRequest request)
+{
+    // 1. Validate image quality + content
+    var validation = await _validationService.ValidateAsync(request);
+    if (!validation.IsValid)
+    {
+        return new PredictionResponse
+        {
+            Label = "Rejected",
+            Confidence = 0,
+            IsRejected = true,
+            RejectionReason = validation.RejectReason
+        };
+    }
+
+    // 2. Route to correct AI service based on type
+    PredictionResponse result;
+    if (request.Type == DiseaseType.Pest)
+        result = await _pestService.PredictAsync(request);
+    else if (request.Type == DiseaseType.Weed)
+        result = await _weedService.PredictAsync(request);
+    else
+        result = await _leafService.PredictAsync(request);
+
+    // 3. Map to Allowed Classes
+    if (isExternalApi && !result.IsRejected)
+    {
+        var mappedLabel = AllowedClasses.MapLabel(
+            result.Label, request.Type);
+        if (mappedLabel != null)
+            result.Label = mappedLabel;
+        else
+        {
+            result.IsRejected = true;
+            result.Label = "Unrecognized Domain";
+        }
+    }
+    return result;
+}
+\end{lstlisting}
+
+
+\section{Chatbot RAG Pipeline --- Confidence Scoring}
+
+\begin{lstlisting}[language=Python,caption={chat\_service.py --- Three-tier confidence scoring},label={lst:chat_confidence}]
+HIGH_CONFIDENCE = 0.65
+MEDIUM_CONFIDENCE = 0.30
+
+def process_message(self, message, session_id=None, 
+                    latitude=None, longitude=None):
+    results = self.embedding_service.search(message, top_k=3)
+    
+    if not results:
+        return self._fallback_response()
+    
+    top_entry, top_score = results[0]
+    
+    # High confidence - direct expert answer
+    if top_score >= HIGH_CONFIDENCE:
+        response = self._high_confidence_response(
+            results, top_entry, top_score, session_id)
+    # Medium confidence - partial match
+    elif top_score >= MEDIUM_CONFIDENCE:
+        response = self._medium_confidence_response(
+            results, top_score, session_id)
+    # Low confidence - out of domain
+    else:
+        response = self._low_confidence_response(session_id)
+    
+    return response
+\end{lstlisting}
+
+
+\section{FAISS Vector Indexing}
+
+\begin{lstlisting}[language=Python,caption={embedding\_service.py --- FAISS index construction},label={lst:faiss}]
+def _build_faiss_index(self):
+    self.model = SentenceTransformer('all-MiniLM-L6-v2')
+    self.embeddings = self.model.encode(
+        self.search_texts, show_progress_bar=True)
+    
+    # Normalize for cosine similarity
+    faiss.normalize_L2(self.embeddings)
+    
+    # Inner product on normalized vectors = cosine similarity
+    dimension = self.embeddings.shape[1]
+    self.index = faiss.IndexFlatIP(dimension)
+    self.index.add(self.embeddings)
+\end{lstlisting}
+
+
+\section{Proximity Alert Generation}
+
+\begin{lstlisting}[language=C,caption={AlertService.cs --- Proximity alert creation with Haversine distance},label={lst:alerts}]
+public async Task CreateProximityAlertsAsync(
+    DiseaseRecord detection, string severity)
+{
+    var radiusMeters = _alertSettings.RadiusInKm * 1000;
+    
+    var nearbyFarmers = await _userRepository
+        .GetNearbyFarmersAsync(longitude, latitude, radiusMeters);
+    
+    // Exclude the farmer who detected the disease
+    var farmersToAlert = nearbyFarmers
+        .Where(f => f.Id != detection.UserId && f.Location != null)
+        .ToList();
+    
+    var alerts = farmersToAlert.Select(farmer => new Alert
+    {
+        DiseaseName = detection.PredictedLabel,
+        DistanceKm = CalculateDistanceKm(
+            latitude, longitude,
+            farmer.Location.Coordinates.Latitude,
+            farmer.Location.Coordinates.Longitude),
+        Severity = severity,
+        IsRead = false
+    }).ToList();
+    
+    await _context.Alerts.InsertManyAsync(alerts);
+}
+\end{lstlisting}
+
+
+\section{Location-Aware Chatbot Response}
+
+\begin{lstlisting}[language=Python,caption={chat\_service.py --- Location-aware contextual enrichment},label={lst:location_aware}]
+# Check for nearby diseases from MongoDB
+nearby_diseases = self.db_service.get_nearby_diseases(
+    float(latitude), float(longitude))
+
+# Scenario 1: User asked about a specific nearby disease
+if matched_disease:
+    alert = f"We have recently detected {formatted_disease} "
+            f"within 5km of your location."
+    response['reply'] = alert + response['reply']
+    response['action'] = {
+        "type": "NAVIGATE_TO_MAP",
+        "params": {
+            "diseaseName": matched_disease,
+            "latitude": float(latitude),
+            "longitude": float(longitude)
+        }
+    }
+
+# Scenario 2: General location query with nearby diseases
+elif is_location_query and nearby_diseases:
+    disease_list = ", ".join(nearby_diseases)
+    alert = f"Detected issues within 5km: {disease_list}"
+    response['reply'] = alert + response['reply']
+\end{lstlisting}
+
+\newpage
+
+
+\chapter{API Endpoint Documentation}
+
+\section{Disease Detection Endpoints}
+
+\begin{table}[H]
+\centering
+\caption{Disease Detection API endpoints}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Method} & \textbf{Endpoint} & \textbf{Description} \\
+\hline
+POST & /api/disease/detect & Accepts multipart image + type (0/1/2). Returns prediction. \\
+\hline
+GET & /api/disease/history & Returns last 20 detections for authenticated user. \\
+\hline
+GET & /api/disease/map-data & Returns geolocated detections for map display. \\
+\hline
+GET & /api/alert & Returns all alerts for authenticated farmer. \\
+\hline
+GET & /api/alert/unread-count & Returns count of unread alerts. \\
+\hline
+PUT & /api/alert/\{id\}/read & Marks a specific alert as read. \\
+\hline
+\end{tabularx}
+\end{table}
+
+\section{Chatbot Endpoints}
+
+\begin{table}[H]
+\centering
+\caption{Chatbot API endpoints}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Method} & \textbf{Endpoint} & \textbf{Description} \\
+\hline
+POST & /api/chat & Send message with optional GPS. Returns AI response. \\
+\hline
+GET & /api/chat/welcome & Returns welcome message with categories. \\
+\hline
+GET & /api/chat/topics & Returns all knowledge topics grouped by category. \\
+\hline
+GET & /api/chat/health & Health check with knowledge base stats. \\
+\hline
+\end{tabularx}
+\end{table}
+

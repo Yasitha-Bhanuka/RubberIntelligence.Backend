@@ -1,0 +1,40 @@
+% ════════════════════════════════════════════════════════════════
+%  CHAPTER 4 — CONCLUSIONS AND RECOMMENDATIONS
+% ════════════════════════════════════════════════════════════════
+\chapter{CONCLUSIONS AND RECOMMENDATIONS}
+
+\section{Conclusions}
+
+This research set out to develop two interconnected components of the RubberIntelligence mobile platform: an AI-driven disease detection module and a domain-specific knowledge chatbot. Looking back at the objectives outlined at the start, the work has achieved what it set out to do, while also revealing some areas where further effort would be worthwhile.
+
+The disease detection module successfully demonstrates that a composite strategy architecture --- routing different threat types to specialised AI services through a single interface --- is a viable and practical approach. The farmer does not need to understand the underlying complexity; they simply select the type of threat, take a photo, and receive a diagnosis. The two-stage image validation pipeline, combining quality assessment with MobileNetV2 content verification, proved effective at filtering out unsuitable images before they consume API resources or produce meaningless results. The overall detection accuracy of 81.3\% across all three threat types is a reasonable starting point, particularly given that the system leverages external APIs rather than custom-trained models.
+
+The class restriction mechanism addressed a real problem that is often overlooked in the literature: external AI services return predictions from their entire vocabulary, and without some form of domain filtering, a rubber plantation farmer might receive a diagnosis of ``Apple Scab'' or ``House Spider'' --- technically correct identifications from the AI's perspective, but entirely unhelpful in context. The 87.5\% rejection rate for non-rubber subjects demonstrates that the two-tier mapping approach (exact match plus keyword mapping) works reasonably well, though there remains room for improvement in handling edge cases.
+
+The geospatial features --- disease mapping and proximity alerts --- represent what is perhaps the most novel aspect of this work from a practical standpoint. The ability to visualise disease detections on a map and automatically warn nearby farmers creates a collaborative early-warning mechanism that did not previously exist in this domain. The Haversine-based distance calculation proved accurate for the distances involved (within 5~km), and the fire-and-forget alert generation pattern ensured that the detecting user's experience was not delayed by the alerting process.
+
+RubberBot, the knowledge chatbot, demonstrated that a RAG-based approach using sentence-transformers and FAISS can deliver meaningful, domain-specific responses by processing all AI queries locally on the server, without depending on external cloud-based language model APIs. The chatbot operates as a separate Python Flask microservice that the mobile application communicates with over the network --- meaning the backend service must be running and reachable for the feature to function. The 86\% overall retrieval accuracy, with 93.3\% correctness among high-confidence responses, suggests that the confidence thresholds were well-calibrated for this particular knowledge base. The location-aware contextual responses --- where the chatbot enriches its answers with nearby disease data from MongoDB --- create a unique integration between the detection and advisory components that adds practical value beyond what either system could provide alone.
+
+In summary, this individual contribution has produced a working, integrated system that addresses the research gaps identified in the literature: fragmented detection coverage, limited rubber-specific solutions, absence of domain-specific advisory tools, lack of integration between detection and knowledge systems, and weak geospatial awareness.
+
+\section{Recommendations for Future Work}
+
+Based on the experience gained during this research, several directions for future development can be recommended:
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{Custom ONNX model refinement:} The backend already includes working alternative ONNX detection services (\texttt{OnnxLeafDiseaseService}, \texttt{OnnxPestDetectionService}, \texttt{OnnxWeedDetectionService}) with custom-trained FastAI models for 9 leaf disease classes and 19 pest classes. However, these models were trained on relatively small datasets. Retraining them using the disease detection records accumulated by the system over time would improve their accuracy and could eventually allow them to replace the external API services entirely, eliminating the cost of API credits and enabling fully offline detection.
+
+    \item \textbf{Expanded knowledge base:} The chatbot's 50+ entries provide solid coverage of core topics but would benefit from expansion, particularly in areas like specific clone recommendations for different soil types, detailed processing workflows, and regional pest management calendars. Engaging more agricultural experts and plantation managers in the knowledge curation process would improve both coverage and credibility.
+
+    \item \textbf{Multilingual support:} Adding Sinhala and Tamil language support to both the chatbot and the disease detection results would significantly expand the system's accessibility. For the chatbot, this would require multilingual embeddings or translated knowledge entries; for the detection module, translated remedies and severity descriptions would be needed.
+
+    \item \textbf{Push notifications for alerts:} The current alert system requires the farmer to open the app and check the alerts screen. Integrating push notifications (via Firebase Cloud Messaging or Expo Push Notifications) would ensure that farmers receive timely warnings even when the app is not actively open.
+
+    \item \textbf{Temporal disease trend analysis:} The accumulated disease records in MongoDB could be analysed to identify temporal patterns --- for example, seasonal peaks in specific diseases or emerging pest populations. A trend analysis dashboard would add a predictive dimension to the system.
+
+    \item \textbf{Community verification:} Adding a mechanism for experienced farmers or agricultural officers to verify or correct AI-generated diagnoses would create a feedback loop that could be used to improve both the class restriction mappings and the chatbot knowledge base over time.
+
+    \item \textbf{Field-scale deployment study:} A longitudinal study deploying the system with a cohort of real plantation farmers over a growing season would provide far more robust accuracy and usability data than the controlled testing conducted in this research.
+\end{enumerate}
+
+\newpage
