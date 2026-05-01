@@ -25,6 +25,17 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
         /// <summary>
         /// Generates and persists a DigitalProductPassport for the given lot.
         /// </summary>
+        // ── Private Helpers ──────────────────────────────────────────────
+
+        private static DateTime GetTruncatedUtcNow()
+        {
+            // MongoDB stores DateTimes with millisecond precision.
+            // Truncate ticks to ensure the JSON serialized during generation
+            // EXACTLY matches the JSON serialized after retrieval from the database.
+            var now = DateTime.UtcNow;
+            return new DateTime(now.Ticks - (now.Ticks % TimeSpan.TicksPerMillisecond), now.Kind);
+        }
+
         public async Task<DigitalProductPassport> GenerateDpp(string dppId)
         {
             // Step 1: Retrieve all ExtractedField records for this lot
@@ -47,8 +58,9 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 Quantity               = TryParseDouble(publicFields.GetValueOrDefault("quantity", "0")),
                 DispatchDetails        = publicFields.GetValueOrDefault("dispatchPort", string.Empty),
                 ConfidentialDataExists = hasConfidentialData,  // Step 4
+                LifecycleState         = "GENERATED",
                 DppHash                = string.Empty,         // Filled after serialization
-                CreatedAt              = DateTime.UtcNow
+                CreatedAt              = GetTruncatedUtcNow()  // Millisecond precision to match MongoDB
             };
 
             // Step 5: Serialize to JSON
@@ -78,7 +90,7 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
             var storedHash = dpp.DppHash;
 
             // Re-create the exact serialization state used when the hash was first computed.
-            // DppHash must be empty to reproduce the original JSON.
+            // DppHash must be empty, and state must reflect the generation moment to reproduce original JSON.
             var snapshot = new DigitalProductPassport
             {
                 Id                     = dpp.Id,
@@ -87,9 +99,9 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 Quantity               = dpp.Quantity,
                 DispatchDetails        = dpp.DispatchDetails,
                 ConfidentialDataExists = dpp.ConfidentialDataExists,
-                LifecycleState         = dpp.LifecycleState,
+                LifecycleState         = "GENERATED",    // Force generation-time state for hashing
                 DppHash                = string.Empty,   // cleared — matches generation-time state
-                CreatedAt              = dpp.CreatedAt
+                CreatedAt              = dpp.CreatedAt   // Truncated milliseconds retrieved from DB
             };
 
             var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions

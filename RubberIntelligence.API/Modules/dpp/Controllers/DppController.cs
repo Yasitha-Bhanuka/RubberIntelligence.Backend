@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using RubberIntelligence.API.Data.Repositories;
+using RubberIntelligence.API.Infrastructure.Security;
 using RubberIntelligence.API.Modules.Dpp.DTOs;
 using RubberIntelligence.API.Modules.Dpp.Models;
 using RubberIntelligence.API.Modules.Dpp.Services;
@@ -17,10 +18,11 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
         private readonly OnnxDppService _onnxDppService;
         private readonly DppDocumentProcessingService _processingService;
         private readonly DppService _dppService;
-        private readonly ConfidentialAccessService _confidentialAccessService;
-        private readonly ExporterContextService _exporterContextService;
+        private readonly DppEncryptionService _dppEncryptionService;
         private readonly IDppRepository _dppRepository;
+        private readonly IDocumentAccessGrantRepository _grantRepository;
         private readonly IUserRepository _userRepository;
+        private readonly EncryptionKeyProvider _keyProvider;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<DppController> _logger;
 
@@ -29,10 +31,11 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             OnnxDppService onnxDppService,
             DppDocumentProcessingService processingService,
             DppService dppService,
-            ConfidentialAccessService confidentialAccessService,
-            ExporterContextService exporterContextService,
+            DppEncryptionService dppEncryptionService,
             IDppRepository dppRepository,
+            IDocumentAccessGrantRepository grantRepository,
             IUserRepository userRepository,
+            EncryptionKeyProvider keyProvider,
             IWebHostEnvironment env,
             ILogger<DppController> logger)
         {
@@ -40,10 +43,11 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             _onnxDppService            = onnxDppService;
             _processingService         = processingService;
             _dppService                = dppService;
-            _confidentialAccessService = confidentialAccessService;
-            _exporterContextService    = exporterContextService;
+            _dppEncryptionService      = dppEncryptionService;
             _dppRepository             = dppRepository;
+            _grantRepository           = grantRepository;
             _userRepository            = userRepository;
+            _keyProvider               = keyProvider;
             _env                       = env;
             _logger                    = logger;
         }
@@ -125,13 +129,59 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 ? rawSafeSummary[..120] + "\u2026"
                 : rawSafeSummary;
 
-            // 6. Save DppDocument with pre-generated Id and public-only summary.
-            //    Confidential field values are structurally absent from this record.
+            // 6a. Detect whether the majority of fields are confidential.
+            //     If so, encrypt the entire document file and discard the plaintext copy.
+            int totalFields        = fieldRecords.Count;
+            int confidentialCount  = fieldRecords.Count(f => f.IsConfidential);
+            bool majorityConfidential = totalFields > 0 && confidentialCount > totalFields / 2;
+
+            string storedFilePath    = tempPath;
+            string? encryptedPath    = null;
+            string? encryptedAesKey  = null;
+            string? plaintextAesKey  = null;
+            string? keyAlgorithm     = null;
+
+            if (majorityConfidential)
+            {
+                // Store encrypted files in a separate secure folder, never in the public Uploads tree.
+                var secureFolder = Path.Combine(_env.ContentRootPath, "App_Data", "SecureDocuments");
+                Directory.CreateDirectory(secureFolder);
+                var encFileName = docId + ".enc";
+                encryptedPath   = Path.Combine(secureFolder, encFileName);
+
+                // Re-open the uploaded file and encrypt it with a unique AES key
+                using (var uploadStream = new FileStream(tempPath, FileMode.Open, FileAccess.Read))
+                {
+                    var rewindable = new FormFile(uploadStream, 0, uploadStream.Length,
+                        request.File.Name, request.File.FileName)
+                    {
+                        Headers     = request.File.Headers,
+                        ContentType = request.File.ContentType
+                    };
+                    
+                    var encryptionResult = await _dppEncryptionService.EncryptFileWithUniqueKeyAsync(rewindable, encryptedPath);
+                    encryptedAesKey = encryptionResult.EncryptedAesKey;   // RSA-encrypted (for DppDocument)
+                    plaintextAesKey = encryptionResult.PlaintextAesKey;   // For future access grants
+                    keyAlgorithm    = encryptionResult.Algorithm;
+                }
+
+                // Remove the plaintext temp file — the encrypted copy is the only persisted version.
+                if (System.IO.File.Exists(tempPath))
+                    System.IO.File.Delete(tempPath);
+
+                storedFilePath = encryptedPath;
+                _logger.LogInformation(
+                    "[DPP] Document {DocId} encrypted ({Conf}/{Total} confidential fields). Algorithm: {Algo}. Encrypted path: {Path}",
+                    docId, confidentialCount, totalFields, keyAlgorithm, encryptedPath);
+            }
+
+            // 6b. Save DppDocument with pre-generated Id and public-only summary.
+            //     Confidential field values are structurally absent from this record.
             var dppDoc = new DppDocument
             {
                 Id                   = docId,
                 OriginalFileName     = request.File.FileName,
-                StoredFilePath       = tempPath,
+                StoredFilePath       = storedFilePath,
                 ContentType          = request.File.ContentType,
                 Classification       = classificationResult.Classification,
                 ConfidenceScore      = classificationResult.ConfidenceScore,
@@ -139,7 +189,11 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                 UploadedBy           = userId,
                 // SAFE: only non-confidential field values — confidential plaintext never stored here
                 ExtractedTextSummary = string.IsNullOrWhiteSpace(safeSummary) ? null : safeSummary,
-                DetectedKeywords     = classificationResult.InfluentialKeywords
+                DetectedKeywords     = classificationResult.InfluentialKeywords,
+                IsDocumentEncrypted  = majorityConfidential,
+                EncryptedFilePath    = encryptedPath,
+                EncryptedAesKey      = encryptedAesKey,          // RSA-encrypted AES key (Base64)
+                KeyEncryptionAlgorithm = keyAlgorithm            // "AES-256-CBC + RSA-2048"
             };
 
             await _dppRepository.CreateAsync(dppDoc);
@@ -179,9 +233,91 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
                     publicFieldCount     = safeExtractedFields.Count,
                     confidentialFieldCount = fieldRecords.Count(f => f.IsConfidential)
                 },
+                // Whether the file was stored encrypted (majority-confidential path)
+                documentEncrypted    = majorityConfidential,
                 // Supported file types info for the client
                 supportedFormats = new[] { "image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf" }
             });
+        }
+
+        // ── GET /api/dpp/{id}/encrypted-file-info ────────────────────────────
+        /// <summary>
+        /// Returns metadata about the AES-256-CBC encrypted file:
+        /// algorithm, IV description, file size, storage path, collection name.
+        /// Does NOT return file contents — use decrypt-document for that.
+        /// </summary>
+        [Authorize(Roles = "Buyer,Exporter,Admin")]
+        [HttpGet("{id}/encrypted-file-info")]
+        public async Task<IActionResult> GetEncryptedFileInfo(string id)
+        {
+            var doc = await _dppRepository.GetByIdAsync(id);
+            if (doc == null)
+                return NotFound(new { error = "Document not found." });
+
+            if (!doc.IsDocumentEncrypted || string.IsNullOrEmpty(doc.EncryptedFilePath))
+                return BadRequest(new { error = "This document is not stored as an encrypted file." });
+
+            long? sizeBytes = null;
+            if (System.IO.File.Exists(doc.EncryptedFilePath))
+            {
+                var fi = new FileInfo(doc.EncryptedFilePath);
+                sizeBytes = fi.Length;
+            }
+
+            return Ok(new
+            {
+                dppId             = doc.Id,
+                originalFileName  = doc.OriginalFileName,
+                contentType       = doc.ContentType,
+                isEncrypted       = true,
+                algorithm         = "AES-256-CBC",
+                ivDescription     = "16-byte CSPRNG IV prepended to the .enc file header",
+                keyManagement     = "EncryptionKeyProvider — env-var DPP_FILE_ENCRYPTION_KEY → appsettings → dev-fallback",
+                encryptedFileName = Path.GetFileName(doc.EncryptedFilePath),
+                encryptedSizeBytes = sizeBytes,
+                encryptedAt       = doc.UploadedAt,
+                collection        = "DppDocuments",
+                decryptAccess     = "Exporter, Admin only — GET /api/dpp/{id}/decrypt-document"
+            });
+        }
+
+        // ── GET /api/dpp/{id}/decrypt-document ───────────────────────────────
+        /// <summary>
+        /// Decrypts the stored AES-256-CBC document and streams it to the caller.
+        /// Only available for documents where IsDocumentEncrypted == true.
+        /// Restricted to Exporter and Admin roles.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("{id}/decrypt-document")]
+        public async Task<IActionResult> DecryptDocument(string id)
+        {
+            var doc = await _dppRepository.GetByIdAsync(id);
+            if (doc == null)
+                return NotFound(new { error = "Document not found." });
+
+            if (!doc.IsDocumentEncrypted || string.IsNullOrEmpty(doc.EncryptedFilePath))
+                return BadRequest(new { error = "This document is not stored as an encrypted file." });
+
+            if (!System.IO.File.Exists(doc.EncryptedFilePath))
+                return NotFound(new { error = "Encrypted file missing from server storage." });
+
+            if (string.IsNullOrEmpty(doc.EncryptedAesKey))
+                return BadRequest(new { error = "Encryption key not found for this document." });
+
+            try
+            {
+                // Decrypt using RSA-wrapped AES key
+                var decryptedStream = await _dppEncryptionService.DecryptFileAsync(
+                    doc.EncryptedFilePath, 
+                    doc.EncryptedAesKey);
+                    
+                return File(decryptedStream, doc.ContentType, doc.OriginalFileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[DPP] Decryption failed for document {DocId}", id);
+                return StatusCode(500, new { error = "Decryption failed.", details = ex.Message });
+            }
         }
 
         // ── POST /api/dpp/{dppId}/generate-passport ──────────────────────
@@ -251,198 +387,180 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             return Ok(doc);
         }
 
-        // ───────────────────────────────────────────────────────────────────────────
-        // CONTROLLED ACCESS — AccessRequest workflow
-        // ───────────────────────────────────────────────────────────────────────────
 
+
+        // ── POST /api/dpp/{id}/grant-access ──────────────────────────────
         /// <summary>
-        /// Exporter submits a request to view confidential fields for a lot.
-        /// Status starts as PENDING — buyer must approve it.
+        /// Grants an exporter access to decrypt a specific encrypted document.
+        /// Creates a DocumentAccessGrant with the plaintext AES key.
+        /// Restricted to Buyer (document owner) and Admin.
         /// </summary>
-        [Authorize(Roles = "Exporter")]
-        [HttpPost("request-confidential/{lotId}")]
-        public async Task<IActionResult> RequestConfidentialAccess(string lotId)
+        [Authorize(Roles = "Buyer,Admin")]
+        [HttpPost("{id}/grant-access")]
+        public async Task<IActionResult> GrantDocumentAccess(string id, [FromBody] GrantAccessRequest request)
         {
-            var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
 
-            // Verify the DPP exists
-            var doc = await _dppRepository.GetByIdAsync(lotId);
-            if (doc == null) return NotFound(new { error = "DPP document not found." });
+            var doc = await _dppRepository.GetByIdAsync(id);
+            if (doc == null)
+                return NotFound(new { error = "Document not found." });
 
-            var request = new AccessRequest
+            // Verify ownership (buyer can only grant access to their own docs, admin can grant to any)
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            if (userRole != "Admin" && doc.UploadedBy != userId)
+                return StatusCode(403, new { error = "You can only grant access to your own documents." });
+
+            if (!doc.IsDocumentEncrypted || string.IsNullOrEmpty(doc.EncryptedAesKey))
+                return BadRequest(new { error = "This document is not encrypted." });
+
+            // Check if grant already exists
+            var existingGrant = await _grantRepository.GetGrantAsync(id, request.ExporterId);
+            if (existingGrant != null)
+                return BadRequest(new { error = "Access already granted to this exporter." });
+
+            // Decrypt the RSA-wrapped AES key to get plaintext key for the grant
+            var decryptedKeyBytes = _keyProvider.DecryptAesKeyWithRsa(doc.EncryptedAesKey);
+            var plaintextAesKey = Convert.ToBase64String(decryptedKeyBytes);
+
+            var grant = new DocumentAccessGrant
             {
-                LotId      = lotId,
-                ExporterId = exporterId,
-                BuyerId    = doc.UploadedBy,
-                Status     = AccessRequestStatus.Pending
+                Id            = ObjectId.GenerateNewId().ToString(),
+                DppDocumentId = id,
+                ExporterId    = request.ExporterId,
+                DecryptionKey = plaintextAesKey,  // Store plaintext AES key for exporter
+                GrantedAt     = DateTime.UtcNow,
+                GrantedBy     = userId,
+                TransactionId = request.TransactionId
             };
 
-            await _dppRepository.CreateAccessRequestAsync(request);
-            _logger.LogInformation("[DPP] Exporter {ExporterId} requested confidential access for lot {LotId}", exporterId, lotId);
+            await _grantRepository.CreateGrantAsync(grant);
 
-            return Ok(new { requestId = request.Id, status = request.Status });
-        }
-
-        /// <summary>
-        /// Buyer approves an exporter's access request.
-        /// Only the buyer who owns the DPP can approve.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpPost("approve-confidential/{requestId}")]
-        public async Task<IActionResult> ApproveConfidentialAccess(string requestId)
-        {
-            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            var request = await _dppRepository.GetAccessRequestAsync(requestId);
-            if (request == null) return NotFound(new { error = "Access request not found." });
-
-            // Ensure only the owning buyer can approve
-            if (request.BuyerId != buyerId)
-                return Forbid();
-
-            if (request.Status != AccessRequestStatus.Pending)
-                return BadRequest(new { error = $"Request is already {request.Status}." });
-
-            await _dppRepository.ApproveAccessRequestAsync(requestId);
-            _logger.LogInformation("[DPP] Buyer {BuyerId} approved confidential access request {RequestId}", buyerId, requestId);
-
-            return Ok(new { requestId, status = AccessRequestStatus.Approved });
-        }
-
-        /// <summary>
-        /// Buyer rejects an exporter's access request.
-        /// Only the buyer who owns the DPP can reject.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpPost("reject-confidential/{requestId}")]
-        public async Task<IActionResult> RejectConfidentialAccess(string requestId)
-        {
-            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            var request = await _dppRepository.GetAccessRequestAsync(requestId);
-            if (request == null) return NotFound(new { error = "Access request not found." });
-
-            if (request.BuyerId != buyerId)
-                return Forbid();
-
-            if (request.Status != AccessRequestStatus.Pending)
-                return BadRequest(new { error = $"Request is already {request.Status}. Only PENDING requests can be rejected." });
-
-            await _dppRepository.RejectAccessRequestAsync(requestId);
-            _logger.LogInformation("[DPP] Buyer {BuyerId} rejected confidential access request {RequestId}", buyerId, requestId);
-
-            return Ok(new { requestId, status = AccessRequestStatus.Rejected });
-        }
-
-        /// <summary>
-        /// Buyer fetches all PENDING access requests for their lots.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpGet("pending-requests")]
-        public async Task<IActionResult> GetPendingRequests()
-        {
-            var buyerId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
-
-            var requests = await _dppRepository.GetPendingRequestsForBuyerAsync(buyerId);
-            return Ok(requests.Select(r => new
-            {
-                r.Id,
-                r.LotId,
-                r.ExporterId,
-                r.Status,
-                r.RequestedAt
-            }));
-        }
-
-        /// <summary>
-        /// Exporter fetches all their own access requests (PENDING, APPROVED, REJECTED).
-        /// Allows the exporter dashboard to show real-time request statuses without polling the confidential endpoint.
-        /// </summary>
-        [Authorize(Roles = "Exporter,Admin")]
-        [HttpGet("my-requests")]
-        public async Task<IActionResult> GetMyAccessRequests()
-        {
-            var exporterId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
-
-            var requests = await _dppRepository.GetAccessRequestsByExporterIdAsync(exporterId);
-            return Ok(requests.Select(r => new
-            {
-                r.Id,
-                r.LotId,
-                r.Status,
-                r.RequestedAt,
-                r.ApprovedAt
-            }));
-        }
-
-        /// <summary>
-        /// Exporter retrieves decrypted confidential fields.
-        /// Gate: APPROVED AccessRequest must exist for this exporter + lotId.
-        /// Decryption happens ONLY in ConfidentialAccessService — never here.
-        /// </summary>
-        [Authorize(Roles = "Exporter,Admin")]
-        [HttpGet("confidential/{lotId}")]
-        public async Task<IActionResult> GetConfidentialFields(string lotId)
-        {
-            var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(exporterId)) return Unauthorized();
-
-            // 1. Verify an APPROVED access request exists
-            var approvedRequest = await _dppRepository.GetApprovedRequestForLotAndExporterAsync(lotId, exporterId);
-            if (approvedRequest == null)
-                return StatusCode(403, new { error = "Access denied. Submit POST /api/dpp/request-confidential/{lotId} and await buyer approval." });
-
-            // 2. Fetch only confidential ExtractedFields
-            var allFields = await _dppRepository.GetExtractedFieldsByLotIdAsync(lotId);
-            var confidentialFields = allFields.Where(f => f.IsConfidential).ToList();
-
-            if (confidentialFields.Count == 0)
-                return Ok(new { message = "No confidential fields found for this lot.", fields = Array.Empty<object>() });
-
-            // 3. Delegate decryption to service layer — never decrypt in controller.
-            //    Pass the full AccessRequest so the service can double-verify status (defense-in-depth).
-            List<ConfidentialFieldDto> decryptedFields;
-            try
-            {
-                decryptedFields = _confidentialAccessService.DecryptFields(
-                    approvedRequest, exporterId!, confidentialFields);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                // Service-layer gate blocked the call despite the DB check above
-                _logger.LogWarning("[DPP] Service-layer gate blocked decryption: {Msg}", ex.Message);
-                return StatusCode(403, new { error = ex.Message });
-            }
-
-            // 4. Log access
             _logger.LogInformation(
-                "[DPP] CONFIDENTIAL ACCESS: Exporter {ExporterId} accessed confidential fields for lot {LotId} at {Time}",
-                exporterId, lotId, DateTime.UtcNow);
+                "[DPP] Access granted: Document {DocId} → Exporter {ExporterId} by {GrantedBy}",
+                id, request.ExporterId, userId);
 
             return Ok(new
             {
-                lotId,
-                accessGrantedAt = approvedRequest.ApprovedAt,
-                fields          = decryptedFields
+                message       = "Access granted successfully.",
+                grantId       = grant.Id,
+                exporterId    = grant.ExporterId,
+                documentId    = grant.DppDocumentId,
+                grantedAt     = grant.GrantedAt,
+                transactionId = grant.TransactionId
             });
+        }
+
+        // ── GET /api/dpp/my-granted-documents ────────────────────────────
+        /// <summary>
+        /// Returns all documents the current exporter has been granted access to.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("my-granted-documents")]
+        public async Task<IActionResult> GetMyGrantedDocuments()
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+            var grants = await _grantRepository.GetGrantsByExporterIdAsync(userId);
+            
+            var documents = new List<object>();
+            foreach (var grant in grants)
+            {
+                var doc = await _dppRepository.GetByIdAsync(grant.DppDocumentId);
+                if (doc != null)
+                {
+                    documents.Add(new
+                    {
+                        grantId          = grant.Id,
+                        documentId       = doc.Id,
+                        fileName         = doc.OriginalFileName,
+                        classification   = doc.Classification,
+                        uploadedAt       = doc.UploadedAt,
+                        grantedAt        = grant.GrantedAt,
+                        transactionId    = grant.TransactionId,
+                        isEncrypted      = doc.IsDocumentEncrypted,
+                        encryptionAlgo   = doc.KeyEncryptionAlgorithm
+                    });
+                }
+            }
+
+            return Ok(new
+            {
+                count     = documents.Count,
+                documents = documents
+            });
+        }
+
+        // ── GET /api/dpp/{id}/decrypt-with-grant ─────────────────────────
+        /// <summary>
+        /// Decrypts a document using an access grant.
+        /// Exporters can only decrypt documents they've been granted access to.
+        /// </summary>
+        [Authorize(Roles = "Exporter,Admin")]
+        [HttpGet("{id}/decrypt-with-grant")]
+        public async Task<IActionResult> DecryptWithGrant(string id)
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+            var doc = await _dppRepository.GetByIdAsync(id);
+            if (doc == null)
+                return NotFound(new { error = "Document not found." });
+
+            if (!doc.IsDocumentEncrypted || string.IsNullOrEmpty(doc.EncryptedFilePath))
+                return BadRequest(new { error = "This document is not encrypted." });
+
+            // Check if exporter has access grant
+            var grant = await _grantRepository.GetGrantAsync(id, userId);
+            if (grant == null && User.FindFirst(ClaimTypes.Role)?.Value != "Admin")
+                return StatusCode(403, new { error = "Access denied. No grant found for this document." });
+
+            try
+            {
+                // Use the plaintext AES key from the grant (or decrypt for admin)
+                string aesKey;
+                if (grant != null)
+                {
+                    aesKey = grant.DecryptionKey;  // Plaintext AES key from grant
+                }
+                else
+                {
+                    // Admin can decrypt using RSA private key
+                    var keyBytes = _keyProvider.DecryptAesKeyWithRsa(doc.EncryptedAesKey!);
+                    aesKey = Convert.ToBase64String(keyBytes);
+                }
+
+                var decryptedStream = await _dppEncryptionService.DecryptFileWithKeyAsync(
+                    doc.EncryptedFilePath, 
+                    aesKey);
+                    
+                return File(decryptedStream, doc.ContentType, doc.OriginalFileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[DPP] Decryption with grant failed for document {DocId}", id);
+                return StatusCode(500, new { error = "Decryption failed.", details = ex.Message });
+            }
         }
 
         // ── GET /api/dpp/verify/{lotId} ──────────────────────────────────
         /// <summary>
         /// Re-computes the SHA-256 hash over the stored DPP and compares it with
         /// the persisted DppHash. Returns { isValid, recalculatedHash, storedHash }.
+        /// Optional expectedLotId enforces 1-to-1 matching between QR and viewed lot.
         /// </summary>
         [Authorize(Roles = "Buyer,Exporter,Admin")]
         [HttpGet("verify/{lotId}")]
-        public async Task<IActionResult> VerifyDpp(string lotId)
+        public async Task<IActionResult> VerifyDpp(string lotId, [FromQuery] string? expectedLotId = null)
         {
             try
             {
+                if (!string.IsNullOrWhiteSpace(expectedLotId) && !string.Equals(lotId, expectedLotId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new { error = $"Lot Mismatch: You scanned a QR code for Lot {lotId.Substring(0, Math.Min(lotId.Length, 8))}…, but you are verifying Lot {expectedLotId.Substring(0, Math.Min(expectedLotId.Length, 8))}…" });
+                }
+
                 var result = await _dppService.VerifyDppHash(lotId);
                 return Ok(result);
             }
@@ -457,32 +575,41 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             }
         }
 
-        // ── GET /api/dpp/exporter-context/{exporterId} ───────────────────
-        /// <summary>
-        /// Returns exporter profile context to the authenticated buyer.
-        /// Used in PendingRequestsScreen so buyers can review an exporter before approving.
-        /// </summary>
-        [Authorize(Roles = "Buyer,Admin")]
-        [HttpGet("exporter-context/{exporterId}")]
-        public async Task<IActionResult> GetExporterContext(string exporterId)
+        [AllowAnonymous]
+        [HttpGet("debug-verify/{lotId}")]
+        public async Task<IActionResult> DebugVerify(string lotId)
         {
-            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId)) return Unauthorized();
+            var dpp = await _dppRepository.GetDppByLotIdAsync(lotId);
+            if (dpp == null) return NotFound("DPP not found");
 
-            try
+            var snapshot = new RubberIntelligence.API.Modules.Dpp.Models.DigitalProductPassport
             {
-                var context = await _exporterContextService.GetExporterContext(exporterId, buyerId);
-                return Ok(context);
-            }
-            catch (KeyNotFoundException ex)
+                Id                     = dpp.Id,
+                LotId                  = dpp.LotId,
+                RubberGrade            = dpp.RubberGrade,
+                Quantity               = dpp.Quantity,
+                DispatchDetails        = dpp.DispatchDetails,
+                ConfidentialDataExists = dpp.ConfidentialDataExists,
+                LifecycleState         = "GENERATED",    
+                DppHash                = string.Empty,   
+                CreatedAt              = dpp.CreatedAt   
+            };
+
+            var json = System.Text.Json.JsonSerializer.Serialize(snapshot, new System.Text.Json.JsonSerializerOptions
             {
-                return NotFound(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[DPP] ExporterContext fetch failed for {ExporterId}", exporterId);
-                return StatusCode(500, new { error = "Failed to retrieve exporter context", details = ex.Message });
-            }
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            });
+
+            var recalculated = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json));
+            return Ok(new 
+            { 
+                storedHash = dpp.DppHash,
+                recalculatedHash = Convert.ToHexString(recalculated).ToLowerInvariant(),
+                match = dpp.DppHash == Convert.ToHexString(recalculated).ToLowerInvariant(),
+                exactJson = json,
+                createdAtRaw = dpp.CreatedAt.ToString("o"),
+                createdAtTicks = dpp.CreatedAt.Ticks
+            });
         }
     }
 }

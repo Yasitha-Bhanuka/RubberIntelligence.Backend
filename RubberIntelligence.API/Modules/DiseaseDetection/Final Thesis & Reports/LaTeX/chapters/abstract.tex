@@ -1,0 +1,18 @@
+% ── Abstract ───────────────────────────────────────────────────
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\begin{singlespace}
+
+Rubber cultivation is a cornerstone of Sri Lanka's agricultural economy, yet plantation owners continue to struggle with timely identification of diseases, pests, and weeds that threaten their yields. Traditional methods rely heavily on expert knowledge which is becoming increasingly scarce, especially in rural areas where most plantations are situated. This individual contribution focuses on two critical components of the ``RubberIntelligence'' mobile platform: an AI-driven disease detection system and a domain-specific knowledge chatbot.
+
+The disease detection module employs a composite strategy architecture that integrates three specialised external AI services --- Plant.id for leaf disease analysis, Insect.id for pest identification, and PlantNet for weed recognition --- accessible through a single unified API endpoint. A two-stage image validation pipeline, incorporating MobileNetV2-based content verification and quality assessment, ensures that only relevant and clear images reach the classification models. Detected threats are mapped geographically using GeoJSON coordinates stored in MongoDB, and a proximity alert system powered by the Haversine formula notifies neighbouring farmers of nearby outbreaks within a configurable radius.
+
+The chatbot component, named RubberBot, implements a Retrieval-Augmented Generation (RAG) architecture that processes all queries locally on the server without relying on external cloud-based AI services. It leverages sentence-transformers with FAISS vector indexing over a curated knowledge base of 50+ expert entries spanning eight categories, including diseases, pests, latex quality, and cultivation practices. The mobile application communicates with the chatbot through a dedicated Python Flask backend service, which must be running and reachable for the feature to function. A three-tier confidence scoring mechanism governs response quality, while MongoDB integration enables location-aware answers that contextualise knowledge with real-time regional disease data.
+
+Both features were implemented using React Native (Expo) for the mobile front end, ASP.NET Core Web API for the primary backend, and a Python Flask microservice for the chatbot. Testing validates the detection accuracy, image validation reliability, chatbot retrieval precision, and the end-to-end user experience across both modules.
+
+\vspace{0.5cm}
+\textbf{Keywords:} rubber plantation, disease detection, chatbot, retrieval-augmented generation, mobile application, deep learning
+
+\end{singlespace}
+\newpage

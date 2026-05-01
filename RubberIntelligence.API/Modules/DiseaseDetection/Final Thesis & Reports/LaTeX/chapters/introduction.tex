@@ -1,0 +1,98 @@
+% ════════════════════════════════════════════════════════════════
+%  CHAPTER 1 — INTRODUCTION
+% ════════════════════════════════════════════════════════════════
+\chapter{INTRODUCTION}
+
+\section{Background}
+
+Rubber (\textit{Hevea brasiliensis}) has held a prominent position in Sri Lanka's agricultural export sector for well over a century. The country's wet zone, with its tropical climate and laterite soils, provides near-ideal growing conditions for rubber trees, and the industry supports hundreds of thousands of smallholder farmers alongside a handful of large-scale estate operations \cite{ref1}. However, the sector faces persistent challenges that have been slowly eroding productivity and profitability. Among the most significant of these challenges are plant diseases, pest infestations, and weed competition --- problems that, if left unaddressed, can reduce latex yields by as much as 30--50\% in severe cases \cite{ref2}.
+
+Traditionally, identifying these threats has depended on the expertise of trained agricultural officers and experienced plantation managers. A farmer noticing unusual spots on leaves or unfamiliar insects on bark would typically wait for a scheduled visit from an extension officer, or travel to the nearest agricultural service centre for advice \cite{ref3}. This process is slow and fundamentally reactive; by the time an accurate diagnosis is reached, the disease or pest may have already spread to neighbouring trees or even neighbouring plantations. In remote areas, where officer visits are infrequent, the delay can be especially costly.
+
+The gap between what farmers need and what the existing support infrastructure can deliver has been widening. According to the Rubber Development Department of Sri Lanka, the number of qualified agricultural officers has not kept pace with the growing number of smallholder registrations \cite{ref4}. At the same time, climate change is altering disease patterns in ways that even experienced farmers find difficult to predict, introducing threats to regions that were previously unaffected \cite{ref5}.
+
+The rise of smartphone adoption in rural Sri Lanka presents a genuine opportunity to bridge this gap. Even in relatively remote plantation areas, mobile penetration has reached levels that would have seemed unlikely a decade ago \cite{ref6}. Farmers who may not have easy access to an expert's office do tend to carry a phone capable of running modern applications. This observation was, in many ways, the starting point for the RubberIntelligence project --- the idea that a well-designed mobile application, backed by appropriate AI technologies, could place diagnostic and advisory capabilities directly in the farmer's hands.
+
+This individual contribution centres on two specific features within the broader RubberIntelligence system. The first is a disease detection module that uses AI-powered image recognition to identify leaf diseases, pests, and weeds from photographs captured by the farmer. The second is a domain-specific chatbot, referred to as RubberBot, which provides on-demand expert-level knowledge about rubber cultivation, diseases, processing, and related topics through a conversational interface.
+
+
+\section{Literature Review}
+
+\subsection{Plant Disease Detection Using Deep Learning}
+
+The application of deep learning to plant disease detection has been an active area of research for the better part of the last decade. One of the earlier large-scale efforts was the work by Mohanty et al.\ (2016), who trained a deep convolutional neural network on the PlantVillage dataset --- a collection of over 54,000 images covering 26 diseases across 14 crop species \cite{ref7}. Using transfer learning with GoogLeNet and AlexNet architectures, they achieved classification accuracies of up to 99.35\% under controlled conditions. While impressive, the authors themselves acknowledged that performance tended to drop when models were tested on images captured in real field conditions rather than laboratory settings.
+
+Ferentinos (2018) expanded on this direction by evaluating multiple CNN architectures including VGG, ResNet, and Inception on a dataset of 87,848 leaf images \cite{ref8}. The study found that VGG networks, despite being computationally heavier, offered the best balance between accuracy and generalisability. A recurring theme in the literature is this tension between model performance on curated datasets and robustness in uncontrolled environments --- a challenge that directly influenced the design decisions in this project.
+
+For rubber-specific diseases, the available research is considerably more limited. Sladojevic et al.\ (2016) demonstrated a CNN-based approach for recognising plant diseases from leaf images with 96.3\% accuracy, though their work did not include rubber species \cite{ref9}. Barbedo (2018) provided an extensive review of deep learning approaches for plant disease detection and noted that datasets for tropical plantation crops, including rubber, remained underrepresented in the research community \cite{ref10}. This gap was a motivating factor for the approach adopted in this project, where external pre-trained models with broad coverage (Plant.id, covering 548+ conditions) were chosen over training a custom model from a limited rubber-only dataset.
+
+\subsection{Pest and Weed Identification Systems}
+
+Pest identification using computer vision has followed a trajectory similar to disease detection, though with some distinctive challenges. Insects and other pests are three-dimensional, mobile subjects that can be photographed from various angles and at various life stages, making classification inherently more variable than leaf-based disease detection \cite{ref11}.
+
+Thenmozhi and Reddy (2019) proposed a deep learning system for crop pest classification that achieved 95.5\% accuracy on a dataset of 40 pest species using ResNet-50 \cite{ref12}. However, their system required significant computing resources that would not be practical for a mobile-first deployment scenario. More recent work by Li et al.\ (2021) explored lightweight architectures such as MobileNet and EfficientNet for real-time pest detection on mobile devices, reporting that MobileNetV2 offered the best trade-off between accuracy and inference speed \cite{ref13}. This finding informed the decision to use MobileNetV2 as the content verification pre-screening model in the current system.
+
+Weed identification introduces yet another set of complications. Weeds are, by definition, plants growing where they are not wanted, and many weed species bear a visual resemblance to crop plants or other non-harmful vegetation \cite{ref14}. The PlantNet collaborative platform, which uses a combination of deep learning and citizen science, has built one of the most comprehensive plant identification databases available, covering hundreds of thousands of species \cite{ref15}. Integrating PlantNet's API for weed identification was a practical decision that leveraged this extensive coverage without requiring a custom-trained model.
+
+\subsection{Chatbot Systems in Agriculture}
+
+The use of conversational AI in agricultural advisory services has been gaining traction, particularly in developing countries where the ratio of farmers to agricultural extension officers is unfavourable. Jha et al.\ (2019) developed an agricultural chatbot for Indian farmers that used rule-based matching to provide crop management advice \cite{ref16}. While functional, the rigidity of rule-based systems meant that even minor variations in how a question was phrased could lead to failed retrievals.
+
+Retrieval-Augmented Generation (RAG) has emerged as a more promising approach for domain-specific conversational systems. Lewis et al.\ (2020) introduced the RAG framework, which combines a retrieval component (that finds relevant documents or knowledge entries) with a generation component (that produces natural language responses) \cite{ref17}. The key advantage of RAG over purely generative models like GPT is that it grounds responses in a specific, controllable knowledge base, reducing the risk of hallucinated or incorrect information --- a critical consideration in agricultural advice, where wrong guidance could lead to crop losses.
+
+Sentence-transformer models, particularly the all-MiniLM-L6-v2 variant, have become a popular choice for the retrieval component in RAG systems due to their compact size and strong performance on semantic similarity tasks \cite{ref18}. Paired with FAISS (Facebook AI Similarity Search), these models enable efficient vector-based retrieval even on resource-constrained devices \cite{ref19}. The chatbot developed in this project draws directly on this architecture, adapting it specifically for the rubber cultivation domain.
+
+\subsection{Geospatial Disease Monitoring}
+
+Geographic information systems (GIS) have long been used in agricultural monitoring, but their integration into mobile farmer-facing applications is relatively recent. Ramcharan et al.\ (2017) described a system that combined disease detection with GPS tagging to map cassava disease spread in East Africa, demonstrating the value of spatial data in understanding outbreak patterns \cite{ref20}. The disease mapping and proximity alert features developed in this project follow a conceptually similar approach, adapted for the rubber plantation context and implemented using MongoDB's native geospatial query capabilities.
+
+
+\section{Research Gap}
+
+Despite the progress documented in the literature, several gaps remain that this research seeks to address:
+
+\begin{enumerate}[label=\arabic*.]
+    \item \textbf{Fragmented detection coverage.} Most existing systems specialise in a single type of threat --- either diseases, or pests, or weeds. Rubber farmers, however, face all three categories simultaneously. There is a lack of unified platforms that can handle the full spectrum of plantation threats through a single interface.
+
+    \item \textbf{Limited rubber-specific solutions.} The majority of plant disease detection research has focused on food crops such as rice, wheat, and tomatoes. Rubber-specific datasets and models are notably scarce, which makes a purely custom-model approach impractical without substantial data collection efforts.
+
+    \item \textbf{Absence of domain-specific advisory chatbots.} While general-purpose agricultural chatbots exist, none of the reviewed systems provide specialised knowledge about rubber cultivation, processing, and management. Farmers seeking rubber-specific advice have no intelligent conversational tool to turn to.
+
+    \item \textbf{No integration between detection and knowledge systems.} Current solutions treat disease detection and knowledge advisory as separate, disconnected tools. There is no existing system that links a disease detection event to relevant contextual knowledge or provides location-aware advice based on nearby outbreak data.
+
+    \item \textbf{Weak geospatial awareness.} Few mobile disease detection tools incorporate geographic tracking and proximity-based alerts. The ability to warn nearby farmers about detected threats in their vicinity remains largely unexplored in the rubber plantation context.
+\end{enumerate}
+
+
+\section{Research Problem}
+
+The central problem this research addresses can be stated as follows: rubber plantation farmers in Sri Lanka currently lack an accessible, integrated mobile tool that can (a)~identify the broad range of threats affecting their plantations --- including leaf diseases, pests, and weeds --- with reasonable accuracy, (b)~provide reliable, domain-specific advisory knowledge through a natural conversational interface, and (c)~leverage geospatial data to create awareness about regional threat patterns and alert nearby farmers of potential risks.
+
+The consequence of this gap is that farmers continue to depend on delayed, in-person expert consultations, leading to late interventions, unnecessary crop losses, and a general sense of being ``on their own'' when it comes to plantation health management.
+
+
+\section{Research Objectives}
+
+\subsection{Main Objective}
+
+The primary objective of this individual contribution is to design, implement, and evaluate two core modules of the RubberIntelligence mobile platform: an AI-powered disease detection system capable of identifying rubber plantation threats from photographs, and a domain-specific knowledge chatbot that provides expert-level guidance on rubber cultivation and management.
+
+\subsection{Specific Objectives}
+
+\begin{enumerate}[label=\arabic*.]
+    \item To develop a unified disease detection module that handles three categories of rubber plantation threats --- leaf diseases, pests, and weeds --- through a single mobile interface, leveraging external AI APIs via a composite strategy backend architecture.
+
+    \item To implement a multi-stage image validation pipeline that pre-screens uploaded images for quality and content relevance before forwarding them to AI classification services, thereby reducing false positives and improving user experience.
+
+    \item To build a class restriction mechanism that maps free-form external API predictions to a controlled set of recognised rubber plantation threat classes, ensuring that only domain-relevant results are presented to users.
+
+    \item To design and implement a geospatial disease monitoring system that tags each detection with GPS coordinates, visualises detection data on an interactive map, and generates proximity-based alerts for farmers within a configurable radius of a new detection.
+
+    \item To develop a RAG-based chatbot (RubberBot) backed by a dedicated Python Flask microservice that retrieves answers from a curated knowledge base of 50+ rubber cultivation entries across eight categories, using semantic similarity search with sentence-transformer embeddings and FAISS vector indexing, without reliance on external cloud-based AI APIs.
+
+    \item To integrate the chatbot with the disease detection database, enabling location-aware responses that contextualise advisory information with real-time nearby disease data.
+
+    \item To evaluate the accuracy, reliability, and usability of both modules through systematic testing, including detection accuracy assessment, chatbot retrieval precision measurement, and user interface validation.
+\end{enumerate}
+
+\newpage

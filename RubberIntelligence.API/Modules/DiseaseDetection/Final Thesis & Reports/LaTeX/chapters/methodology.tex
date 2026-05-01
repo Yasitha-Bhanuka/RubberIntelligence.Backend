@@ -1,0 +1,354 @@
+% ════════════════════════════════════════════════════════════════
+%  CHAPTER 2 — METHODOLOGY
+% ════════════════════════════════════════════════════════════════
+\chapter{METHODOLOGY}
+
+\section{Overview of the Technical Approach}
+
+Before diving into implementation specifics, it is worth outlining the overall technical philosophy behind the two features developed in this project. Rather than attempting to train custom deep learning models from scratch --- an approach that would have required a substantial, labelled rubber-specific dataset that did not exist at the time of development --- the decision was made to leverage well-established external AI services for the classification tasks and to focus engineering effort on the surrounding infrastructure: validation, mapping, alerting, and knowledge retrieval.
+
+This pragmatic approach was informed by the literature review findings, where many researchers noted that transfer learning and pre-trained models consistently outperformed models trained on small, domain-specific datasets \cite{ref8, ref10}. For the chatbot, a Retrieval-Augmented Generation approach was chosen over a purely generative model, primarily because the consequences of providing incorrect agricultural advice are tangible and potentially costly.
+
+Table~\ref{tab:methodology_summary} provides a high-level summary of the methodology for each feature.
+
+\begin{table}[H]
+\centering
+\caption{Summary of methodology for each feature}
+\label{tab:methodology_summary}
+\begin{tabularx}{\textwidth}{|l|X|X|}
+\hline
+\textbf{Aspect} & \textbf{Disease Detection} & \textbf{Chatbot (RubberBot)} \\
+\hline
+Core technique & External AI APIs + class restriction & RAG with FAISS vector search \\
+\hline
+Frontend & React Native (Expo) & React Native (Expo) \\
+\hline
+Backend & ASP.NET Core Web API & Python Flask microservice \\
+\hline
+Database & MongoDB (GeoJSON) & MongoDB (geo-queries) \\
+\hline
+AI Models & Plant.id, Insect.id, PlantNet, MobileNetV2 (content verification), custom ONNX models (leaf disease, pest) & sentence-transformers, FAISS \\
+\hline
+Key design pattern & Composite Strategy Pattern & Three-tier confidence scoring \\
+\hline
+\end{tabularx}
+\end{table}
+
+
+\section{System Architecture}
+
+The overall system follows a modular, service-oriented architecture. The mobile application communicates with two separate backend services: the primary .NET API handles disease detection, user management, and data persistence, while the Python chatbot service handles natural language queries independently. Both backends share access to a common MongoDB database, which enables cross-feature capabilities such as location-aware chatbot responses that reference recent disease detection data.
+
+Figure~\ref{fig:system_arch} illustrates the high-level system architecture, showing how the mobile application, backend services, external AI APIs, and database interact.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{\centering\vspace{3cm}\textit{[System Architecture Diagram --- to be inserted]}\\\textit{Mobile App $\rightarrow$ .NET API $\rightarrow$ External AI Services}\\\textit{Mobile App $\rightarrow$ Flask Chatbot $\rightarrow$ FAISS/MongoDB}\vspace{3cm}}}
+    \caption{High-level system architecture of the RubberIntelligence platform}
+    \label{fig:system_arch}
+\end{figure}
+
+
+\section{Disease Detection Module}
+
+\subsection{Design Rationale}
+
+The disease detection feature needed to handle three fundamentally different types of threats --- leaf diseases caused by fungal or bacterial pathogens, pest infestations caused by insects and other invertebrates, and weed competition from unwanted plant species. Each type requires a different kind of AI model and returns predictions in different formats.
+
+Rather than building three separate detection workflows visible to the user, the decision was to present a unified interface at the mobile app level while routing requests to specialised AI services behind the scenes. The Composite Strategy Pattern was chosen for this purpose: a single entry point delegates to the appropriate sub-service based on a type parameter, and the results are normalised into a consistent format before being returned.
+
+\subsection{Frontend Implementation}
+
+The disease detection frontend was built using React Native with Expo, organised as a self-contained feature module with its own navigator stack.
+
+\subsubsection{Navigation Structure}
+
+The module uses \texttt{createNativeStackNavigator} to manage five screens, with lazy loading applied to all screens except the home screen to reduce initial memory consumption:
+
+\begin{itemize}
+    \item \textbf{DiseaseHomeScreen} --- The entry point, presenting four menu options: Leaf Disease, Pest Detection, Weed Identification, and Disease Map, plus a Recent History link. Each detection option passes a type parameter (0, 1, or 2) to the camera screen.
+    \item \textbf{DiseaseCameraScreen} --- Handles both live camera capture (using \texttt{expo-camera}) and gallery image selection (using \texttt{expo-document-picker}). Selected images are programmatically resized to 1080px width and compressed to JPEG at 50\% quality before analysis, reducing upload size and API processing time.
+    \item \textbf{DiseaseResultScreen} --- Displays the AI prediction result, including the predicted label, confidence percentage, a colour-coded severity badge (High/Medium/Low), and a recommended remedy. Users can review the analysed image alongside the diagnosis.
+    \item \textbf{DiseaseHistoryScreen} --- Shows the user's last 20 detection records in a scrollable list with pull-to-refresh functionality, each card displaying the timestamp, disease type badge, predicted label, and confidence score.
+    \item \textbf{DiseaseMapScreen} --- Renders an interactive map (using \texttt{react-native-maps}) showing geolocated disease detections from the past 30 days, with colour-coded markers for different threat types and a 5km radius circle around the farmer's plantation.
+\end{itemize}
+
+Figure~\ref{fig:disease_flow} shows the user flow through the disease detection screens.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{\centering\vspace{2cm}\textit{[Disease Detection User Flow Diagram --- to be inserted]}\\\textit{Home Screen $\rightarrow$ Camera Screen $\rightarrow$ Result Screen}\\\textit{Home Screen $\rightarrow$ History Screen / Disease Map}\vspace{2cm}}}
+    \caption{User flow through the disease detection feature}
+    \label{fig:disease_flow}
+\end{figure}
+
+\subsubsection{Image Capture and Preparation}
+
+The camera screen implements a deliberate two-step workflow: capture first, then analyse. After taking a photo or selecting one from the gallery, the user sees a preview with ``Retake'' and ``Analyse'' buttons. This design gives the farmer an opportunity to verify that the image is clear and properly focused before spending time on the API call.
+
+Image preparation was an area where practical considerations heavily influenced the design. Early testing revealed that high-resolution smartphone photos (often 12MP or more) caused slow uploads and occasionally exceeded API size limits. The solution was to use \texttt{expo-image-manipulator} to resize images to 1080px width while maintaining the aspect ratio, then compress them to JPEG format at 50\% quality. This reduced file sizes by approximately 80\% without significantly affecting classification accuracy.
+
+GPS coordinates are captured at analysis time using \texttt{expo-location} with balanced accuracy. If live GPS is unavailable (for example, when the farmer is indoors reviewing a previously taken photo), the system falls back to the user's registered plantation coordinates from their profile.
+
+\subsubsection{API Communication}
+
+The frontend communicates with the backend through a shared Axios-based API client that automatically attaches JWT bearer tokens for authentication. The disease detection service exposes two functions:
+
+\begin{itemize}
+    \item \texttt{detect(imageUri, type, lat, lng)} --- Sends the image as \texttt{multipart/form-data} along with the detection type enum and GPS coordinates to \texttt{POST /api/disease/detect}.
+    \item \texttt{getHistory()} --- Fetches the user's recent detection records from \texttt{GET /api/disease/history}.
+    \item \texttt{getMapData(days)} --- Retrieves geolocated detection points from \texttt{GET /api/disease/map-data} for the map visualisation.
+\end{itemize}
+
+
+\subsection{Backend Implementation}
+
+\subsubsection{Composite Strategy Pattern}
+
+The backend disease detection module is built around the Composite Strategy Pattern, implemented through a central \texttt{CompositeDiseaseService} class. This service implements the \texttt{IDiseaseDetectionService} interface and internally holds references to three specialised sub-services:
+
+\begin{itemize}
+    \item \texttt{PlantIdDiseaseService} (ILeafDiseaseService) --- Handles type 0 (leaf disease) requests by calling the Plant.id Health Assessment API.
+    \item \texttt{InsectIdPestService} (IPestDetectionService) --- Handles type 1 (pest) requests by calling the Insect.id Identification API.
+    \item \texttt{PlantNetWeedService} (IWeedDetectionService) --- Handles type 2 (weed) requests by calling the PlantNet Identification API.
+\end{itemize}
+
+When a prediction request arrives, the composite service first validates the image, then routes to the appropriate sub-service based on the \texttt{DiseaseType} enum, and finally applies class restriction post-processing to ensure only recognised rubber plantation threats are returned. Figure~\ref{fig:composite_pattern} illustrates this routing mechanism.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{\centering\vspace{2.5cm}\textit{[Composite Strategy Pattern Diagram --- to be inserted]}\\\textit{PredictionRequest $\rightarrow$ CompositeDiseaseService}\\\textit{$\rightarrow$ Validate $\rightarrow$ Route by Type $\rightarrow$ MapLabel $\rightarrow$ Response}\vspace{2.5cm}}}
+    \caption{Composite Strategy Pattern for disease detection routing}
+    \label{fig:composite_pattern}
+\end{figure}
+
+\subsubsection{Image Validation Pipeline}
+
+A significant design decision was to validate images \textit{before} sending them to external AI services. This serves two purposes: it prevents wasted API credits on images that are clearly unsuitable (blurry, too small, or showing unrelated content), and it provides immediate, meaningful feedback to the user.
+
+The validation pipeline consists of two stages:
+
+\textbf{Stage 1: Quality Assessment} (\texttt{ImageQualityService})
+
+This stage checks two basic quality criteria:
+\begin{itemize}
+    \item \textbf{Resolution check} --- The image must be at least 224$\times$224 pixels, which is the minimum input size for the AI models.
+    \item \textbf{Blur detection} --- A Laplacian variance-based blur score is computed. Images with a score below the configured threshold are rejected with a message asking the user to retake the photo.
+\end{itemize}
+
+\textbf{Stage 2: Content Verification} (\texttt{ContentVerificationService})
+
+This stage uses a pre-trained MobileNetV2 ONNX model (trained on ImageNet's 1,000 classes) to verify that the image actually contains the type of content the user selected. For example, if the user chose ``Leaf Disease'' detection, this stage checks whether the top-10 MobileNetV2 predictions include any plant-related ImageNet classes.
+
+The verification process works as follows:
+\begin{enumerate}
+    \item The uploaded image is resized to 224$\times$224 pixels and normalised using ImageNet mean and standard deviation values.
+    \item MobileNetV2 inference produces logits for all 1,000 ImageNet classes.
+    \item Softmax is applied to convert logits to probabilities.
+    \item The top-10 predicted classes are checked against curated sets of relevant ImageNet class indices --- \texttt{PlantRelatedIndices} for leaf disease and weed detection, \texttt{PestRelatedIndices} for pest detection.
+    \item If none of the top predictions fall within the relevant index set, the image is rejected with an explanation (e.g., ``This image does not appear to contain an insect or pest'').
+\end{enumerate}
+
+\subsubsection{External AI Service Integration}
+
+Each sub-service follows a similar pattern: convert the uploaded image to base64, send it to the respective API with the appropriate API key, parse the response, and return a normalised \texttt{PredictionResponse}.
+
+\textbf{Plant.id Leaf Disease Service:} Calls the Plant.id v3 \texttt{health\_assessment} endpoint, which analyses plant health from leaf images and returns disease suggestions with probability scores. The service parses the response to extract the top disease suggestion, determines severity based on the probability (above 0.8 = High, 0.5--0.8 = Medium, below 0.5 = Low), and provides specific remedies for common rubber diseases such as anthracnose, powdery mildew, corynespora leaf spot, and blight.
+
+\textbf{Insect.id Pest Service:} Calls the Insect.id v1 \texttt{identification} endpoint, which identifies invertebrate species from photographs. The service returns the top match with species name and probability.
+
+\textbf{PlantNet Weed Service:} Calls the PlantNet v2 \texttt{identify/all} endpoint with the uploaded image, returning the top plant match with scientific and common names.
+
+\subsubsection{Class Restriction Mechanism}
+
+External AI services return predictions from their full training vocabulary --- Plant.id can identify 548+ conditions, Insect.id covers thousands of invertebrate species, and PlantNet recognises hundreds of thousands of plants. Most of these are irrelevant to rubber plantations. The \texttt{AllowedClasses} static class implements a two-tier mapping system:
+
+\begin{enumerate}
+    \item \textbf{Exact match} --- If the API label exactly matches one of the trained rubber-plantation class names (case-insensitive), it passes through directly.
+    \item \textbf{Keyword mapping} --- If the API label contains a known keyword (e.g., ``colletotrichum'' maps to the trained class ``Colletorichum''), the label is mapped to the correct class name.
+    \item \textbf{No match} --- If neither an exact match nor a keyword mapping is found, the prediction is marked as ``Unrecognised Domain'' with \texttt{IsRejected = true}. This also prevents proximity alerts from being generated for irrelevant detections.
+\end{enumerate}
+
+The system currently supports 9 trained leaf disease classes and 19 trained pest classes.
+
+\subsubsection{Alternative Local ONNX Detection Services}
+
+In addition to the external API-based services, the backend includes three alternative detection services that use locally-hosted ONNX models for classification. These services implement the same \texttt{ILeafDiseaseService}, \texttt{IPestDetectionService}, and \texttt{IWeedDetectionService} interfaces, allowing them to be swapped in via dependency injection without changing any other code.
+
+\begin{itemize}
+    \item \textbf{\texttt{OnnxLeafDiseaseService}} --- Uses a custom-trained FastAI CNN model (\texttt{rubber\_leaf\_disease\_model.onnx}) to classify rubber leaf conditions into 9 classes: Anthracnose, Birds\_eye, Colletorichum, Corynespora, Dry\_Leaf, Healthy, Leaf\_Spot, Pesta, and Powdery\_mildew. Images are preprocessed to 224$\times$224 pixels with ImageNet normalisation, and predictions below a 60\% confidence threshold are rejected.
+
+    \item \textbf{\texttt{OnnxPestDetectionService}} --- Uses a separate custom-trained model (\texttt{pests\_model.onnx}) to classify rubber plantation pests into 19 classes, including Aphids, Mites, Weevil, Whitefly, and others. A 55\% confidence threshold is used, slightly lower than the leaf model to account for the higher class count.
+
+    \item \textbf{\texttt{OnnxWeedDetectionService}} --- Reuses the \texttt{rubber\_leaf\_disease\_model.onnx} model but remaps its 9 output labels to weed-specific terminology. For example, ``Healthy'' becomes ``Healthy Weed'' with herbicide advice, and ``Anthracnose'' becomes ``Weed with Fungal Infection'' with spread prevention guidance.
+\end{itemize}
+
+These ONNX services enable fully offline detection, eliminating the cost of API credits and the latency of network round-trips. However, they are trained on a smaller dataset compared to the external services and are currently configured as alternative implementations rather than the primary detection path. The \texttt{mobilenetv2.onnx} model used for content verification (Stage 2 of the validation pipeline) is always active regardless of which detection mode is selected.
+
+\subsubsection{Disease Record Persistence and Geospatial Storage}
+
+Every detection --- including rejected ones --- is persisted to MongoDB as a \texttt{DiseaseRecord} document. Each record includes the user ID, disease type, predicted label, confidence score, severity level, timestamp, image path, and, crucially, a GeoJSON point representing the detection location.
+
+MongoDB's native geospatial indexing on the \texttt{Location} field enables efficient spatial queries. The \texttt{GetMapData} endpoint retrieves all geolocated detections from the past 30 days (excluding rejected and unrecognised results) for rendering on the disease map. The endpoint also supports filtering by a configurable time window.
+
+
+\subsection{Proximity Alert System}
+
+When a disease detection completes with Medium or High severity, the \texttt{DiseaseController} triggers a fire-and-forget background task that invokes the \texttt{AlertService}. This service:
+
+\begin{enumerate}
+    \item Queries the user repository for all registered farmers within a configurable radius (default: 5~km) of the detection location, using MongoDB's \texttt{\$geoNear} capabilities.
+    \item Excludes the farmer who made the detection (they already know about it).
+    \item Creates an \texttt{Alert} document for each nearby farmer, containing the disease name, severity, distance in kilometres (calculated using the Haversine formula), and the detection coordinates.
+    \item Inserts all alerts into MongoDB in a single batch operation.
+\end{enumerate}
+
+The Haversine formula used for distance calculation is:
+
+\begin{equation}
+    d = 2R \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta\phi}{2}\right) + \cos\phi_1 \cdot \cos\phi_2 \cdot \sin^2\left(\frac{\Delta\lambda}{2}\right)}\right)
+    \label{eq:haversine}
+\end{equation}
+
+\noindent where $R$ is the Earth's radius (6,371~km), $\phi$ represents latitude, and $\lambda$ represents longitude.
+
+On the frontend, the \texttt{AlertsScreen} displays all alerts for the authenticated farmer in a scrollable list. Each alert card shows the disease name, severity badge, distance from the farmer's plantation, and time since detection. Alerts can be individually marked as read, and the unread count is used for badge display on the tab navigator.
+
+
+\section{Chatbot Module (RubberBot)}
+
+\subsection{Design Rationale}
+
+The chatbot was designed with one overriding constraint: it had to perform all AI processing locally on the server, without depending on external cloud-based language model APIs such as OpenAI or Google Gemini. Rubber plantations in Sri Lanka are often located in areas with unreliable connectivity, and a chatbot that depended on cloud-based language models would be both costly and unreliable. However, it is important to note that the chatbot is implemented as a separate Python Flask microservice --- the mobile application must be able to reach this backend service over the network for the chatbot feature to function.
+
+This ruled out approaches based on OpenAI's GPT models or similar cloud-hosted generative AI services. Instead, a Retrieval-Augmented Generation architecture was adopted, where the ``retrieval'' component uses locally-loaded sentence-transformer models and FAISS indexing, and the ``generation'' component is essentially a structured response composer rather than a free-text generator. This design prioritises accuracy and reliability over conversational flexibility --- a trade-off deemed appropriate for a domain where incorrect advice can have real consequences.
+
+\subsection{Knowledge Base}
+
+The foundation of RubberBot is a curated JSON knowledge base containing 50+ expert-vetted entries organised across eight categories:
+
+\begin{table}[H]
+\centering
+\caption{Knowledge base categories and coverage}
+\label{tab:kb_categories}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Category} & \textbf{Sample Topics} \\
+\hline
+Diseases & Corynespora, Phytophthora, Oidium, White Root, Pink Disease, Brown Bast \\
+\hline
+Pests & Mites, scale insects, termites, bark borers, white grubs \\
+\hline
+Weeds & Imperata, Mikania, cover crops, weeding schedules \\
+\hline
+Latex Quality & DRC, VFA, MST, pH, ammonia, TSR/RSS grading \\
+\hline
+Cultivation & Tapping, clones, budding, fertiliser, land preparation \\
+\hline
+Climate & Temperature, rainfall, soil type, monsoon effects \\
+\hline
+Economics & Prices, yield optimisation, costs, intercropping \\
+\hline
+Processing & RSS, crepe, centrifuged latex, block rubber \\
+\hline
+\end{tabularx}
+\end{table}
+
+Each entry follows a consistent structure with fields for ID, category, question, answer, and keywords. The question and keywords together form the search text used for embedding, ensuring that both the natural language phrasing and the domain terminology contribute to retrieval accuracy.
+
+\subsection{Embedding and Retrieval Pipeline}
+
+\subsubsection{Sentence-Transformer Embeddings}
+
+On startup, the \texttt{EmbeddingService} loads the \texttt{all-MiniLM-L6-v2} sentence-transformer model (approximately 80~MB). This model converts text into 384-dimensional dense vectors that capture semantic meaning --- texts with similar meaning produce vectors that are close together in the embedding space, regardless of exact word overlap.
+
+For each knowledge entry, a search text is constructed by concatenating the question, keywords, and category name. All search texts are encoded into embeddings and L2-normalised.
+
+\subsubsection{FAISS Vector Indexing}
+
+The normalised embeddings are inserted into a FAISS \texttt{IndexFlatIP} (inner product) index. Since the vectors are L2-normalised, inner product is equivalent to cosine similarity, providing an efficient and exact similarity search mechanism.
+
+When a user query arrives, it is encoded using the same sentence-transformer model, normalised, and searched against the FAISS index to retrieve the top-3 most similar knowledge entries along with their similarity scores.
+
+The system also includes a TF-IDF fallback: if \texttt{sentence-transformers} or \texttt{faiss-cpu} are not installed, the \texttt{EmbeddingService} automatically falls back to scikit-learn's \texttt{TfidfVectorizer} with cosine similarity. This fallback is less accurate for semantic understanding but ensures the chatbot remains functional.
+
+\subsection{Confidence Scoring and Response Composition}
+
+The \texttt{ChatService} implements a three-tier confidence system based on the cosine similarity score of the top retrieved entry:
+
+\begin{itemize}
+    \item \textbf{High confidence ($\geq$ 0.65):} The system returns the matched knowledge entry's answer directly, tagged with its category. Related topics from the same category are suggested for further exploration.
+    \item \textbf{Medium confidence (0.30 -- 0.65):} The system acknowledges a partial match and presents truncated excerpts from the top matching entries, along with suggestions to rephrase the question.
+    \item \textbf{Low confidence ($<$ 0.30):} The query is considered out of domain. The system lists available knowledge categories and prompts the user to ask about rubber-specific topics.
+\end{itemize}
+
+These thresholds were determined empirically through iterative testing with representative queries.
+
+\subsection{Location-Aware Contextual Responses}
+
+A distinctive feature of RubberBot is its ability to contextualise responses with real-time local disease data. When the mobile app sends a chat message, it includes the user's GPS coordinates. The chatbot's \texttt{DbService} queries MongoDB for disease detections within 5~km of those coordinates from the past 30 days.
+
+This integration produces four distinct response scenarios:
+
+\begin{enumerate}
+    \item \textbf{Matched disease nearby:} If the user asks about a specific disease (e.g., ``What is Corynespora?'') and that disease has been detected near their location, the response is prefixed with an alert and includes a button to view the detection on the disease map.
+    \item \textbf{General location query with nearby diseases:} If the user asks ``What diseases are near me?'' and there are active detections nearby, the chatbot lists them with a map link.
+    \item \textbf{Disease query with no nearby detections:} If the user asks about a disease that has \textit{not} been detected nearby, a reassuring message is prepended to the standard knowledge response.
+    \item \textbf{Location query with clear area:} If the user asks about nearby issues but no detections exist within the radius, the chatbot confirms that their area appears clear.
+\end{enumerate}
+
+\subsection{Frontend Implementation}
+
+The chatbot interface follows a modern messaging app paradigm with several thoughtful additions:
+
+\begin{itemize}
+    \item \textbf{Message bubbles} with distinct styles for user (green) and bot (white) messages.
+    \item \textbf{Confidence indicators} shown as colour-coded badges on bot responses --- green for high, amber for medium, red for low confidence.
+    \item \textbf{Category tags} displayed on high-confidence responses to indicate the knowledge domain.
+    \item \textbf{Suggested topic chips} rendered as a horizontal scrollable row after bot responses, allowing one-tap follow-up questions.
+    \item \textbf{Action buttons} for navigating to the disease map when location-relevant disease data is mentioned.
+    \item \textbf{Online status indicator} showing whether the chatbot service is reachable.
+    \item \textbf{Typing indicator} with an animated activity spinner while the bot processes a query.
+\end{itemize}
+
+The screen uses a \texttt{FlatList} with virtualised rendering (\texttt{initialNumToRender=15}, \texttt{windowSize=10}) for smooth scrolling performance even with long conversation histories. The input area uses a \texttt{KeyboardAvoidingView} with platform-specific behaviour for proper keyboard handling on both iOS and Android.
+
+
+\section{Technology Stack Summary}
+
+Table~\ref{tab:tech_stack} summarises the complete technology stack used across both features.
+
+\begin{table}[H]
+\centering
+\caption{Technology stack summary}
+\label{tab:tech_stack}
+\begin{tabularx}{\textwidth}{|l|X|}
+\hline
+\textbf{Component} & \textbf{Technologies} \\
+\hline
+Mobile Application & React Native, Expo SDK, TypeScript \\
+\hline
+Primary Backend & ASP.NET Core 8, C\#, MongoDB Driver \\
+\hline
+Chatbot Backend & Python 3.9+, Flask, CORS \\
+\hline
+AI/ML Libraries & sentence-transformers, FAISS, Microsoft.ML.OnnxRuntime, SixLabors.ImageSharp, custom FastAI ONNX models \\
+\hline
+External AI APIs & Plant.id v3, Insect.id (Kindwise), PlantNet v2 \\
+\hline
+Database & MongoDB with GeoJSON spatial indexing \\
+\hline
+Authentication & JWT Bearer tokens \\
+\hline
+State Management & Zustand (frontend) \\
+\hline
+Navigation & React Navigation (Native Stack) \\
+\hline
+Maps & react-native-maps (MapView) \\
+\hline
+Key Expo Modules & expo-camera, expo-image-picker, expo-location, expo-image-manipulator \\
+\hline
+\end{tabularx}
+\end{table}
+
+\newpage

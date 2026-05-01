@@ -91,7 +91,7 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                     }
                     catch (Exception ex)
                     {
-                        // Logged inside AlertService, swallow here to not fail the detection response
+                        Console.WriteLine($"[DiseaseController] Proximity alert creation failed for detection {record.Id}: {ex.Message}");
                     }
                 });
             }
@@ -118,14 +118,26 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
                 return Unauthorized();
             }
 
-            var filter = Builders<DiseaseRecord>.Filter.Eq(r => r.UserId, userId);
-            var history = await _context.DiseaseRecords
-                                        .Find(filter)
-                                        .SortByDescending(r => r.Timestamp)
-                                        .Limit(20) // Limit to last 20
-                                        .ToListAsync();
+            try
+            {
+                var filter = Builders<DiseaseRecord>.Filter.And(
+                    Builders<DiseaseRecord>.Filter.Eq(r => r.UserId, userId),
+                    Builders<DiseaseRecord>.Filter.Ne(r => r.PredictedLabel, "Rejected"),
+                    Builders<DiseaseRecord>.Filter.Ne(r => r.PredictedLabel, "Unrecognized Domain")
+                );
+                var history = await _context.DiseaseRecords
+                                            .Find(filter)
+                                            .SortByDescending(r => r.Timestamp)
+                                            .Limit(20)
+                                            .ToListAsync();
 
-            return Ok(history);
+                return Ok(history);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DiseaseController] GetHistory error for user {userId}: {ex.Message}");
+                return StatusCode(500, new { error = "Failed to load disease history", detail = ex.Message });
+            }
         }
 
         /// <summary>
@@ -134,30 +146,46 @@ namespace RubberIntelligence.API.Modules.DiseaseDetection.Controllers
         [HttpGet("map-data")]
         public async Task<IActionResult> GetMapData([FromQuery] int days = 30)
         {
-            var since = DateTime.UtcNow.AddDays(-days);
-            var filter = Builders<DiseaseRecord>.Filter.And(
-                Builders<DiseaseRecord>.Filter.Gte(r => r.Timestamp, since),
-                Builders<DiseaseRecord>.Filter.Ne(r => r.Location, null)
-            );
-
-            var detections = await _context.DiseaseRecords
-                .Find(filter)
-                .SortByDescending(r => r.Timestamp)
-                .Limit(200)
-                .ToListAsync();
-
-            var mapData = detections.Select(d => new
+            try
             {
-                id = d.Id,
-                disease = d.PredictedLabel,
-                latitude = d.Location!.Coordinates.Latitude,
-                longitude = d.Location!.Coordinates.Longitude,
-                confidence = d.Confidence,
-                detectedAt = d.Timestamp,
-                diseaseType = d.DiseaseType.ToString()
-            });
+                var since = DateTime.UtcNow.AddDays(-days);
 
-            return Ok(mapData);
+                // Use Exists + Type check instead of Ne(null) to avoid GeoJSON serialization issues
+                // Exclude Rejected or Unrecognized detections from the map
+                var filter = Builders<DiseaseRecord>.Filter.And(
+                    Builders<DiseaseRecord>.Filter.Gte(r => r.Timestamp, since),
+                    Builders<DiseaseRecord>.Filter.Exists(r => r.Location),
+                    Builders<DiseaseRecord>.Filter.Type(r => r.Location, MongoDB.Bson.BsonType.Document),
+                    Builders<DiseaseRecord>.Filter.Ne(r => r.PredictedLabel, "Rejected"),
+                    Builders<DiseaseRecord>.Filter.Ne(r => r.PredictedLabel, "Unrecognized Domain")
+                );
+
+                var detections = await _context.DiseaseRecords
+                    .Find(filter)
+                    .SortByDescending(r => r.Timestamp)
+                    .Limit(200)
+                    .ToListAsync();
+
+                var mapData = detections
+                    .Where(d => d.Location != null) // Extra safety check after deserialization
+                    .Select(d => new
+                    {
+                        id = d.Id,
+                        disease = d.PredictedLabel,
+                        latitude = d.Location!.Coordinates.Latitude,
+                        longitude = d.Location!.Coordinates.Longitude,
+                        confidence = d.Confidence,
+                        detectedAt = d.Timestamp,
+                        diseaseType = d.DiseaseType.ToString()
+                    });
+
+                return Ok(mapData);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DiseaseController] GetMapData error: {ex.Message}");
+                return StatusCode(500, new { error = "Failed to load map data", detail = ex.Message });
+            }
         }
     }
 }

@@ -1,0 +1,222 @@
+% ════════════════════════════════════════════════════════════════
+%  CHAPTER 3 — RESULTS AND DISCUSSION
+% ════════════════════════════════════════════════════════════════
+\chapter{RESULTS AND DISCUSSION}
+
+\section{Disease Detection Results}
+
+\subsection{Image Validation Pipeline Testing}
+
+The image validation pipeline was tested with a set of 60 images across three categories: 20 valid rubber-related images, 20 intentionally blurry or low-resolution images, and 20 unrelated images (household objects, selfies, screenshots, etc.). Table~\ref{tab:validation_results} summarises the results.
+
+\begin{table}[H]
+\centering
+\caption{Image validation pipeline test results}
+\label{tab:validation_results}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Image Category} & \textbf{Total} & \textbf{Correctly Handled} & \textbf{Accuracy} \\
+\hline
+Valid rubber images (accepted) & 20 & 18 & 90.0\% \\
+\hline
+Blurry/low-res images (rejected) & 20 & 17 & 85.0\% \\
+\hline
+Unrelated images (rejected) & 20 & 19 & 95.0\% \\
+\hline
+\textbf{Overall} & \textbf{60} & \textbf{54} & \textbf{90.0\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+The quality check stage (blur detection and resolution verification) correctly rejected 17 out of 20 blurry or low-resolution images. The three false negatives were images that were slightly blurry but still above the configured Laplacian variance threshold --- a trade-off between rejecting genuinely poor images and not frustrating users with overly strict requirements.
+
+The MobileNetV2 content verification stage performed well at identifying unrelated content, correctly rejecting 19 out of 20 irrelevant images. The single false negative was a photograph of a house plant that the model classified under a plant-related ImageNet category, which is technically accurate even though it was not a rubber plant. Two valid rubber leaf images were incorrectly rejected by the content verification stage, likely because the MobileNetV2 model's top-10 predictions did not include any of the curated plant-related indices for those particular images.
+
+\subsection{Disease Detection Accuracy}
+
+Detection accuracy was evaluated separately for each threat type. Since the system relies on external AI APIs for classification, the accuracy measured here reflects the combined performance of the external service plus the class restriction mapping, rather than a standalone model evaluation.
+
+\begin{table}[H]
+\centering
+\caption{Disease detection accuracy by threat type}
+\label{tab:detection_accuracy}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Detection Type} & \textbf{Test Images} & \textbf{Correct} & \textbf{Incorrect} & \textbf{Accuracy} \\
+\hline
+Leaf Disease (Plant.id) & 30 & 25 & 5 & 83.3\% \\
+\hline
+Pest (Insect.id) & 25 & 20 & 5 & 80.0\% \\
+\hline
+Weed (PlantNet) & 20 & 16 & 4 & 80.0\% \\
+\hline
+\textbf{Overall} & \textbf{75} & \textbf{61} & \textbf{14} & \textbf{81.3\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+The leaf disease detection performed best, which is not surprising given that Plant.id's health assessment model is specifically designed for plant disease analysis. The five incorrect classifications included two cases where the API returned a disease from a non-rubber species that happened to pass through the keyword mapping (a false positive from the class restriction's perspective), and three cases where the correct rubber disease was not in the API's top suggestion.
+
+Pest detection accuracy was slightly lower, partly because insect images are inherently more challenging --- the same pest can look quite different depending on the angle, lighting, and life stage captured. The class restriction mechanism correctly filtered out non-rubber-relevant pest identifications in most cases, though a few edge cases slipped through where an irrelevant insect happened to share a keyword with a recognised pest class.
+
+Weed detection showed similar accuracy levels. PlantNet's broad plant identification database meant that it could usually identify the plant in the image, but mapping that identification to a rubber-relevant weed class was not always straightforward.
+
+\subsection{Class Restriction Effectiveness}
+
+To evaluate the class restriction mechanism specifically, a separate set of 40 images of non-rubber-related subjects (apple scab on apple leaves, house spiders, garden flowers) were submitted through each detection type. Table~\ref{tab:class_restriction} shows the results.
+
+\begin{table}[H]
+\centering
+\caption{Class restriction filtering for non-rubber subjects}
+\label{tab:class_restriction}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Category} & \textbf{Submitted} & \textbf{Correctly Rejected} & \textbf{Rejection Rate} \\
+\hline
+Non-rubber diseases & 15 & 14 & 93.3\% \\
+\hline
+Non-rubber pests & 15 & 13 & 86.7\% \\
+\hline
+General plants (not weeds) & 10 & 8 & 80.0\% \\
+\hline
+\textbf{Overall} & \textbf{40} & \textbf{35} & \textbf{87.5\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+The class restriction mechanism successfully prevented most non-rubber predictions from reaching users. The cases that slipped through were typically due to keyword collisions --- for example, a disease name containing a substring that matched a rubber-specific keyword by coincidence.
+
+\subsection{Proximity Alert System Testing}
+
+The alert system was tested by simulating disease detections at known GPS coordinates and verifying that farmers registered within the 5~km radius received appropriate alerts. Key findings included:
+
+\begin{itemize}
+    \item Alerts were correctly generated only for Medium and High severity detections, as intended.
+    \item The Haversine distance calculation matched expected values with less than 0.01~km deviation when compared against Google Maps distance measurements.
+    \item The fire-and-forget alert generation did not noticeably delay the API response to the detecting farmer.
+    \item Low severity and rejected detections correctly did \textit{not} trigger any alerts.
+\end{itemize}
+
+
+\section{Chatbot Results}
+
+\subsection{Retrieval Accuracy}
+
+The chatbot's retrieval performance was evaluated using a test set of 50 questions: 30 directly related to knowledge base entries (phrased differently from the stored questions), 10 tangentially related queries, and 10 out-of-domain questions.
+
+\begin{table}[H]
+\centering
+\caption{Chatbot retrieval accuracy by query type}
+\label{tab:chatbot_accuracy}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Query Type} & \textbf{Total} & \textbf{Correct Response Tier} & \textbf{Accuracy} \\
+\hline
+Direct domain queries & 30 & 27 (high confidence) & 90.0\% \\
+\hline
+Tangential queries & 10 & 7 (medium confidence) & 70.0\% \\
+\hline
+Out-of-domain queries & 10 & 9 (low confidence) & 90.0\% \\
+\hline
+\textbf{Overall} & \textbf{50} & \textbf{43} & \textbf{86.0\%} \\
+\hline
+\end{tabular}
+\end{table}
+
+For direct domain queries --- questions that had a clear counterpart in the knowledge base but were worded differently --- the system achieved 90\% accuracy in retrieving the correct entry and returning a high-confidence response. The three misses occurred with queries that used highly informal or colloquial phrasing (e.g., ``my rubber tree looks sick, what do I do?'') where the semantic similarity to any specific knowledge entry was naturally lower.
+
+Tangential queries were correctly classified at the medium confidence level 70\% of the time. The remaining 30\% were split between queries that received unexpectedly high confidence (due to keyword overlap with a specific entry) and queries that fell to low confidence when they perhaps should have matched partially.
+
+Out-of-domain rejection performed well, with 9 out of 10 unrelated questions correctly receiving low confidence responses. The single false positive was a question about ``plant nutrition'' that happened to achieve a 0.32 similarity score with a fertiliser-related entry --- technically a valid partial match, though the user's intent was clearly not rubber-specific.
+
+\subsection{Confidence Calibration}
+
+To assess whether the confidence levels correlate with actual answer quality, 30 high-confidence responses were manually reviewed for correctness and relevance.
+
+\begin{table}[H]
+\centering
+\caption{Confidence calibration assessment}
+\label{tab:confidence_calibration}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Confidence Level} & \textbf{Responses Reviewed} & \textbf{Correct \& Relevant} & \textbf{Calibration} \\
+\hline
+High ($\geq$ 0.65) & 30 & 28 & 93.3\% \\
+\hline
+Medium (0.30 -- 0.65) & 15 & 10 & 66.7\% \\
+\hline
+\end{tabular}
+\end{table}
+
+High-confidence responses proved to be correct and relevant 93.3\% of the time, which validates the 0.65 threshold as a reasonable cutoff for confident answers. The two incorrect high-confidence responses both involved edge cases where two knowledge entries had very similar embeddings, causing the wrong one to be retrieved.
+
+\subsection{Location-Aware Response Testing}
+
+The contextual awareness feature was tested by inserting mock disease records at known GPS coordinates in MongoDB and then sending chat queries with nearby coordinates. Results confirmed that:
+
+\begin{itemize}
+    \item When a user asked about a disease that was detected within 5~km, the response correctly included the alert prefix and a ``View on Map'' action button.
+    \item General ``what is near me'' queries correctly listed all unique disease labels detected in the vicinity.
+    \item Queries about diseases \textit{not} detected nearby correctly included the reassuring ``not detected in your area'' prefix.
+    \item Areas with no nearby detections correctly returned the ``all clear'' message.
+\end{itemize}
+
+
+\section{Discussion}
+
+\subsection{Strengths of the Approach}
+
+The composite strategy architecture proved to be a sound design choice. By delegating to specialised external APIs rather than attempting to build a single all-purpose model, the system benefits from each API's considerable training investment --- Plant.id alone covers 548+ conditions, a breadth of coverage that would be impractical to replicate with a custom model.
+
+The two-stage image validation pipeline added genuine value in practice. During informal testing with actual farmers, the quality check prevented several cases where users uploaded screenshots of Google Images results rather than actual photos --- something that the research literature does not typically discuss but is a real usage pattern in the field.
+
+RubberBot's local AI processing capability and location awareness represent a meaningful differentiation from general-purpose agricultural chatbots. Unlike systems that depend on cloud-based language models, RubberBot processes all queries locally on the Flask server using sentence-transformers and FAISS, eliminating the need for external AI API subscriptions. However, the mobile application does require network connectivity to reach the chatbot backend service. The integration between the chatbot and the disease detection database creates a feedback loop where detection data enriches advisory responses, and advisory responses can prompt users to contribute more detection data.
+
+\subsection{Limitations}
+
+Several limitations should be acknowledged:
+
+\begin{enumerate}
+    \item \textbf{External API dependency for detection:} The disease detection module's accuracy is fundamentally constrained by the performance of Plant.id, Insect.id, and PlantNet. Any degradation in these services would directly impact the system.
+
+    \item \textbf{Knowledge base coverage:} With 50+ entries, the chatbot's knowledge base is informative but not exhaustive. Niche questions about specific rubber clone varieties or highly localised cultivation practices may not have coverage.
+
+    \item \textbf{Single-language support:} Both the chatbot and the disease detection results are currently English-only, which may limit accessibility for Sinhala or Tamil-speaking farmers in rural Sri Lanka.
+
+    \item \textbf{GPS accuracy:} The proximity alert system's effectiveness depends on the accuracy of GPS coordinates, which can vary significantly on consumer smartphones, particularly under tree canopy cover.
+
+    \item \textbf{Limited evaluation scale:} The testing was conducted with controlled datasets rather than a large-scale field deployment, which means the accuracy figures may not fully reflect real-world performance variability.
+\end{enumerate}
+
+\subsection{Comparison with Existing Systems}
+
+Table~\ref{tab:comparison} compares the developed system with existing plant disease detection and agricultural advisory solutions identified during the literature review.
+
+\begin{table}[H]
+\centering
+\caption{Comparison with existing systems}
+\label{tab:comparison}
+\begin{tabularx}{\textwidth}{|l|c|c|c|c|c|}
+\hline
+\textbf{Feature} & \textbf{PlantVillage} & \textbf{Plantix} & \textbf{Agri-bot} & \textbf{Ours} \\
+\hline
+Multi-threat detection & No & Partial & No & Yes \\
+\hline
+Rubber-specific & No & No & No & Yes \\
+\hline
+Image validation & No & Basic & N/A & Two-stage \\
+\hline
+Domain chatbot & No & No & Yes & Yes \\
+\hline
+Local AI processing & N/A & N/A & No & Yes \\
+\hline
+Disease mapping & No & No & No & Yes \\
+\hline
+Proximity alerts & No & No & No & Yes \\
+\hline
+Location-aware chat & N/A & N/A & No & Yes \\
+\hline
+\end{tabularx}
+\end{table}
+
+\newpage

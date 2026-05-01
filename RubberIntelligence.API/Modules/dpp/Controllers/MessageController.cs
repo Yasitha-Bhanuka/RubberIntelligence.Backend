@@ -57,6 +57,25 @@ namespace RubberIntelligence.API.Modules.Dpp.Controllers
             }
         }
 
+        // ── GET /api/messages/unread-count ──────────────────────────
+        [HttpGet("unread-count")]
+        public async Task<IActionResult> GetUnreadCount()
+        {
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId)) return Unauthorized();
+
+            try
+            {
+                var count = await _messageService.GetUnreadCount(userId);
+                return Ok(new { count });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[MSG] Unread count failed for user {UserId}", userId);
+                return StatusCode(500, new { error = "Failed to get unread count", details = ex.Message });
+            }
+        }
+
         // ── GET /api/messages/{lotId} ────────────────────────────────────
         [HttpGet("{lotId}")]
         public async Task<IActionResult> GetMessages(string lotId)

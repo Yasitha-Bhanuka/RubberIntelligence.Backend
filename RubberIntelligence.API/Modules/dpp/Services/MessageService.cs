@@ -75,6 +75,9 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
                 .ToList();
         }
 
+        public async Task<long> GetUnreadCount(string userId)
+            => await _messageRepository.GetUnreadCountAsync(userId);
+
         // ── Private Helpers ──────────────────────────────────────────────
 
         private string DecryptIfNeeded(Message m) =>

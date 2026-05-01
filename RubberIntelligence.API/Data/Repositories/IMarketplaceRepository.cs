@@ -9,12 +9,20 @@ namespace RubberIntelligence.API.Data.Repositories
         Task<List<SellingPost>> GetActivePostsAsync();
         Task<List<SellingPost>> GetPostsByBuyerIdAsync(string buyerId);
         Task<SellingPost?> GetPostByIdAsync(string id);
-        
+
         // Transactions
         Task CreateTransactionAsync(MarketplaceTransaction transaction);
         Task<MarketplaceTransaction?> GetTransactionByIdAsync(string id);
         Task<List<MarketplaceTransaction>> GetTransactionsByUserIdAsync(string userId); // Combined for Buyer/Exporter
         Task UpdateTransactionAsync(MarketplaceTransaction transaction);
         Task UpdatePostAsync(SellingPost post);
+
+        // Interest Requests (Exporter → Buyer request flow)
+        Task AddInterestRequestAsync(LotInterestRequest request);
+        Task<LotInterestRequest?> GetInterestRequestAsync(string postId, string exporterId);
+        Task<List<LotInterestRequest>> GetInterestRequestsByPostIdAsync(string postId);
+        Task UpdateInterestRequestAsync(LotInterestRequest request);
+        Task<List<SellingPost>> GetRequestedPostsByBuyerIdAsync(string buyerId);
+        Task<List<LotInterestRequest>> GetInterestRequestsByExporterIdAsync(string exporterId);
     }
 }

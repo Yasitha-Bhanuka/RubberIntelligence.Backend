@@ -1,0 +1,168 @@
+% ============================================================
+%  Individual Final Report — RubberIntelligence
+%  Disease Detection & Knowledge-Based Chatbot Features
+%  Bhanuka K.Y  |  IT22563750
+%  SLIIT  —  April 2026
+% ============================================================
+\documentclass[12pt,a4paper,oneside]{report}
+
+% ── Encoding & Fonts ──────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}          % Times New Roman equivalent
+
+% ── Page Layout (SLIIT: 40mm left/bottom, 25mm top/right) ────
+\usepackage[
+    left=40mm,
+    right=25mm,
+    top=25mm,
+    bottom=40mm
+]{geometry}
+
+% ── Spacing ───────────────────────────────────────────────────
+\usepackage{setspace}
+\onehalfspacing                % 1.5 line spacing as required
+
+% ── Graphics & Figures ────────────────────────────────────────
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{subcaption}
+\graphicspath{{figures/}}
+
+% ── Tables ────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+
+% ── Code Listings ─────────────────────────────────────────────
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{codegray}{RGB}{128,128,128}
+\definecolor{codeblue}{RGB}{0,0,180}
+
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codeblue}\bfseries,
+    commentstyle=\color{codegreen}\itshape,
+    stringstyle=\color{red!70!black},
+    numberstyle=\tiny\color{codegray},
+    numbers=left,
+    numbersep=8pt,
+    breaklines=true,
+    breakatwhitespace=false,
+    tabsize=4,
+    showstringspaces=false,
+    captionpos=b,
+    aboveskip=12pt,
+    belowskip=8pt,
+}
+\lstset{style=codestyle}
+
+% ── Hyperlinks & PDF Metadata ─────────────────────────────────
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+    pdftitle={AI Driven Intelligent Rubber Production Monitoring System},
+    pdfauthor={Bhanuka K.Y},
+    pdfsubject={Individual Final Report},
+}
+
+% ── Misc Packages ─────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{url}
+\usepackage{caption}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{etoolbox}
+
+% ── Chapter & Section Formatting (SLIIT style) ───────────────
+\titleformat{\chapter}[display]
+    {\normalfont\fontsize{14}{16}\bfseries}
+    {\chaptertitlename\ \thechapter}{0pt}{\fontsize{14}{16}\selectfont}
+\titlespacing*{\chapter}{0pt}{-20pt}{20pt}
+
+\titleformat{\section}
+    {\normalfont\fontsize{12}{14}\bfseries}
+    {\thesection}{1em}{}
+
+\titleformat{\subsection}
+    {\normalfont\fontsize{12}{14}\bfseries}
+    {\thesubsection}{1em}{}
+
+% ── Header & Footer ──────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[R]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+
+% ── Rename "Bibliography" to "Reference List" ────────────────
+\renewcommand{\bibname}{Reference List}
+
+% ════════════════════════════════════════════════════════════════
+%                     DOCUMENT BEGINS
+% ════════════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Preliminary Pages (Roman numerals) ────────────────────────
+\pagenumbering{roman}
+
+% ----- Cover Page -----
+\input{chapters/cover}
+
+% ----- Title Page -----
+\input{chapters/titlepage}
+
+% ----- Declaration -----
+\input{chapters/declaration}
+
+% ----- Abstract -----
+\input{chapters/abstract}
+
+% ----- Acknowledgement -----
+\input{chapters/acknowledgement}
+
+% ----- Table of Contents -----
+\tableofcontents
+\newpage
+
+% ----- List of Figures -----
+\listoffigures
+\newpage
+
+% ----- List of Tables -----
+\listoftables
+\newpage
+
+% ----- List of Abbreviations -----
+\input{chapters/abbreviations}
+
+% ── Body (Arabic numerals) ───────────────────────────────────
+\pagenumbering{arabic}
+
+% ----- Chapter 1: Introduction -----
+\input{chapters/introduction}
+
+% ----- Chapter 2: Methodology -----
+\input{chapters/methodology}
+
+% ----- Chapter 3: Results & Discussion -----
+\input{chapters/results}
+
+% ----- Chapter 4: Conclusions & Recommendations -----
+\input{chapters/conclusion}
+
+% ── Reference List ────────────────────────────────────────────
+\input{chapters/references}
+
+% ── Appendices ────────────────────────────────────────────────
+\input{chapters/appendices}
+
+\end{document}
