@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace RubberIntelligence.API.Modules.Bidding.Services
-{
+{//These files don't contain actual logic. They just define the rules.
     public interface IBiddingRepository
     {
         Task<Auction?> GetAuctionByIdAsync(string id);
