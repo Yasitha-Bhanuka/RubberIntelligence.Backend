@@ -78,12 +78,35 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
         // Secure Invoice Processing (Encryption)
         // ==========================================
 
-        public async Task<(string EncryptedFilePath, string DppClassification, string EncryptionMetadata)> ProcessAndSecureInvoiceAsync(
+        public async Task<(string StoredFilePath, string DppClassification, string? EncryptionMetadata)> ProcessAndSecureInvoiceAsync(
             Stream fileStream, string fileName, string extractedText, string exporterId, string secureStoragePath)
         {
             // 1. Classify
             var classificationResult = ClassifyDocument(extractedText, fileName);
             string classification = classificationResult.Classification;
+
+            Directory.CreateDirectory(secureStoragePath);
+
+            // ── NON_CONFIDENTIAL: skip encryption entirely, store the raw file ────
+            if (classification != "CONFIDENTIAL")
+            {
+                string rawFileName = $"{Guid.NewGuid()}_{fileName}";
+                string rawFilePath = Path.Combine(secureStoragePath, rawFileName);
+
+                using (var rawOutput = new FileStream(rawFilePath, FileMode.Create))
+                {
+                    if (fileStream.CanSeek) fileStream.Position = 0;
+                    await fileStream.CopyToAsync(rawOutput);
+                }
+
+                _logger.LogInformation(
+                    "[DppAI] NON_CONFIDENTIAL document stored as plain file: {Path}", rawFilePath);
+
+                // null EncryptionMetadata signals to callers that this file is NOT encrypted
+                return (rawFilePath, classification, null);
+            }
+
+            // ── CONFIDENTIAL: AES-256-CBC file encryption + RSA key wrapping ──────
 
             // 2. Fetch Exporter to get Public Key
             if (!Guid.TryParse(exporterId, out Guid exporterGuid))
@@ -110,69 +133,87 @@ namespace RubberIntelligence.API.Modules.Dpp.Services
             aes.GenerateKey();
             aes.GenerateIV();
             var aesKey = aes.Key;
-            var aesIV = aes.IV;
+            var aesIV  = aes.IV;
 
             // 4. Encrypt File Content with AES (Symmetric)
             string encryptedFileName = $"{Guid.NewGuid()}_{fileName}.enc";
             string fullEncryptedPath = Path.Combine(secureStoragePath, encryptedFileName);
 
-            Directory.CreateDirectory(secureStoragePath);
-
             using (var outputFileStream = new FileStream(fullEncryptedPath, FileMode.Create))
             using (var cryptoStream = new CryptoStream(outputFileStream, aes.CreateEncryptor(), CryptoStreamMode.Write))
             {
-                // Reset input stream position just in case
                 if (fileStream.CanSeek) fileStream.Position = 0;
                 await fileStream.CopyToAsync(cryptoStream);
             }
 
-            // 5. Encrypt AES Key with Exporter's RSA Public Key (Asymmetric)
+            // 5. Wrap AES Key with Exporter's RSA Public Key (Asymmetric)
             var encryptedAesKey = EncryptRsa(aesKey, exporter.PublicKey);
 
-            // 6. Create Metadata
+            // 6. Serialise encryption metadata so RetrieveInvoiceAsync can decrypt later
             var metadataObj = new
             {
-                IV = Convert.ToBase64String(aesIV),
+                IV           = Convert.ToBase64String(aesIV),
                 EncryptedKey = Convert.ToBase64String(encryptedAesKey)
             };
             string encryptionMetadata = JsonSerializer.Serialize(metadataObj);
 
+            _logger.LogInformation(
+                "[DppAI] CONFIDENTIAL document encrypted (AES-256-CBC + RSA-2048): {Path}", fullEncryptedPath);
+
             return (fullEncryptedPath, classification, encryptionMetadata);
         }
 
-        public async Task<byte[]> RetrieveInvoiceAsync(string filePath, string encryptionMetadataJson, string accessorId)
+        /// <summary>
+        /// Retrieves an invoice document.
+        /// • If <paramref name="encryptionMetadataJson"/> is null or empty the file was stored
+        ///   as a plain (NON_CONFIDENTIAL) document — bytes are returned directly without decryption.
+        /// • If metadata is present the file is a CONFIDENTIAL .enc file — AES key is unwrapped
+        ///   with the exporter's RSA private key and the file is decrypted on demand.
+        /// </summary>
+        public async Task<byte[]> RetrieveInvoiceAsync(string filePath, string? encryptionMetadataJson, string accessorId)
         {
-            // 1. Fetch User (Accessor) to get Private Key
-            if (!Guid.TryParse(accessorId, out Guid accessorGuid)) throw new ArgumentException("Invalid User ID");
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException("Invoice file missing from server storage.", filePath);
 
-            // Create a transient scope to resolve the scoped IUserRepository from this singleton
+            // ── NON_CONFIDENTIAL path: no encryption metadata → return raw bytes ──
+            if (string.IsNullOrEmpty(encryptionMetadataJson))
+            {
+                _logger.LogInformation(
+                    "[DppAI] Returning plain (non-encrypted) invoice for accessor {AccessorId}", accessorId);
+                return await File.ReadAllBytesAsync(filePath);
+            }
+
+            // ── CONFIDENTIAL path: RSA-unwrap AES key → decrypt file ────────────
+
+            // 1. Fetch Exporter's private key
+            if (!Guid.TryParse(accessorId, out Guid accessorGuid))
+                throw new ArgumentException("Invalid User ID");
+
             using var scope = _scopeFactory.CreateScope();
             var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
 
             var accessor = await userRepository.GetByIdAsync(accessorGuid);
-            if (accessor == null) throw new Exception("User not found");
+            if (accessor == null)        throw new Exception("User not found");
+            if (string.IsNullOrEmpty(accessor.PrivateKey))
+                throw new Exception("User has no decryption keys established.");
 
-            if (string.IsNullOrEmpty(accessor.PrivateKey)) throw new Exception("User has no decryption keys established.");
+            // 2. Parse metadata
+            var metadata = JsonSerializer.Deserialize<EncryptionMetadataDto>(encryptionMetadataJson)
+                           ?? throw new Exception("Invalid encryption metadata");
 
-            // 2. Parse Metadata
-            var metadata = JsonSerializer.Deserialize<EncryptionMetadataDto>(encryptionMetadataJson);
-            if (metadata == null) throw new Exception("Invalid encryption metadata");
-
-            byte[] iv = Convert.FromBase64String(metadata.IV);
+            byte[] iv           = Convert.FromBase64String(metadata.IV);
             byte[] encryptedKey = Convert.FromBase64String(metadata.EncryptedKey);
 
-            // 3. Decrypt AES Key using Private Key
+            // 3. Unwrap AES key with RSA private key
             byte[] aesKey = DecryptRsa(encryptedKey, accessor.PrivateKey);
 
-            // 4. Decrypt File
-            if (!File.Exists(filePath)) throw new FileNotFoundException("Encrypted invoice file missing");
-
+            // 4. AES-256-CBC decrypt
             using var aes = Aes.Create();
             aes.Key = aesKey;
-            aes.IV = iv;
+            aes.IV  = iv;
 
             using var memoryStream = new MemoryStream();
-            using (var fileStream = new FileStream(filePath, FileMode.Open))
+            using (var fileStream   = new FileStream(filePath, FileMode.Open, FileAccess.Read))
             using (var cryptoStream = new CryptoStream(fileStream, aes.CreateDecryptor(), CryptoStreamMode.Read))
             {
                 await cryptoStream.CopyToAsync(memoryStream);

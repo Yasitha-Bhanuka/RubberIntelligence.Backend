@@ -252,13 +252,16 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 .Where(f => !f.IsConfidential && !string.IsNullOrWhiteSpace(f.EncryptedValue))
                 .Select(f => f.EncryptedValue));
 
-            // 5. Classify document + AES/RSA-encrypt the raw file (existing invoice security pipeline)
+            // 5. Classify document + conditionally encrypt the file
+            //    NON_CONFIDENTIAL → plain file saved, EncryptionMetadata = null
+            //    CONFIDENTIAL     → AES-256-CBC encrypted .enc file, EncryptionMetadata = JSON
             string storagePath = Path.Combine(_env.ContentRootPath, "App_Data", "SecureInvoices");
-            string encryptedPath, dppClassification, encryptionMetadata;
+            string storedPath, dppClassification;
+            string? encryptionMetadata;
             try
             {
                 using var encStream = file.OpenReadStream();
-                (encryptedPath, dppClassification, encryptionMetadata) =
+                (storedPath, dppClassification, encryptionMetadata) =
                     await _onnxDppService.ProcessAndSecureInvoiceAsync(
                         encStream, file.FileName, classifyText, transaction.ExporterId, storagePath);
             }
@@ -285,8 +288,8 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                     // Encrypt with PBKDF2(SecretRequestId, transactionId) → AES-256-CBC
                     var (cipherB64, ivB64) = _zkEncryptionService.EncryptDocumentBankStatement(
                         rawFileBytes, transaction.SecretRequestId, transaction.Id);
-                    transaction.ConditionalVault    = cipherB64;
-                    transaction.ConditionalVaultIv  = ivB64;
+                    transaction.ConditionalVault   = cipherB64;
+                    transaction.ConditionalVaultIv = ivB64;
                     _logger.LogInformation(
                         "[Invoice] CONFIDENTIAL vault encrypted with PBKDF2 for transaction {TxId}", id);
                 }
@@ -306,15 +309,15 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                     "This transaction was created before the zero-knowledge workflow was activated.", id);
             }
 
-            // 6b. Zero-Knowledge guarantee: permanently nullify the SecretRequestId
-            //     so it is NEVER stored alongside the ciphertext in the database.
-            //     The exporter must have already claimed it via GET /transactions/{id}/my-secret.
+            // 6b. Zero-Knowledge guarantee: permanently nullify the SecretRequestId.
             transaction.SecretRequestId = null;
 
             // 6c. Persist to MongoDB
-            transaction.DppInvoicePath     = encryptedPath;
+            //     EncryptionMetadata is null for NON_CONFIDENTIAL documents (plain file).
+            //     GetInvoice checks for null to decide whether to decrypt.
+            transaction.DppInvoicePath     = storedPath;
             transaction.DppClassification  = dppClassification;
-            transaction.EncryptionMetadata = encryptionMetadata;
+            transaction.EncryptionMetadata = encryptionMetadata;   // null → not encrypted
             transaction.InvoiceFields      = safeInvoiceFields;
             transaction.Status             = "InvoiceUploaded";
             transaction.LastUpdatedAt      = DateTime.UtcNow;
@@ -452,33 +455,55 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
         {
             var exporterId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-            // 1. Validate
+            // 1. Validate transaction ownership
             var transaction = await _marketplaceRepository.GetTransactionByIdAsync(id);
-            if (transaction == null) return NotFound("Transaction not found");
-            if (transaction.ExporterId != exporterId) return StatusCode(403, "Access Denied: Only the purchasing Exporter can view this invoice.");
+            if (transaction == null) return NotFound("Transaction not found.");
+            if (transaction.ExporterId != exporterId)
+                return StatusCode(403, "Access Denied: Only the purchasing Exporter can view this invoice.");
 
-            if (string.IsNullOrEmpty(transaction.DppInvoicePath) || string.IsNullOrEmpty(transaction.EncryptionMetadata))
-                return NotFound("No invoice available");
+            // DppInvoicePath is required; EncryptionMetadata is nullable (null = plain file)
+            if (string.IsNullOrEmpty(transaction.DppInvoicePath))
+                return NotFound("No invoice available for this transaction.");
+
+            // 2. Route serves BOTH classifications:
+            //    CONFIDENTIAL     → RetrieveInvoiceAsync decrypts the .enc file using RSA/AES
+            //    NON_CONFIDENTIAL → RetrieveInvoiceAsync streams raw bytes (EncryptionMetadata is null)
 
             try
             {
-                // 2. Retrieve & Decrypt
+                // 3. Retrieve — RetrieveInvoiceAsync handles both encrypted and plain files
                 byte[] fileBytes = await _onnxDppService.RetrieveInvoiceAsync(
-                    transaction.DppInvoicePath, transaction.EncryptionMetadata, exporterId);
+                    transaction.DppInvoicePath,
+                    transaction.EncryptionMetadata,   // null → plain file, no decryption
+                    exporterId);
 
-                // Determine content type (default to octet-stream or try to preserve original extension logic if stored)
-                // For simplified Prototype: application/octet-stream or assume original type if we stored it. 
-                // We didn't store original ContentType in DB. Let's infer from file name or default to PDF/Image.
+                // 4. Infer content-type from the stored file name
+                //    Encrypted files have an extra .enc suffix; plain files keep the original extension.
+                var path = transaction.DppInvoicePath;
                 string contentType = "application/octet-stream";
-                if (transaction.DppInvoicePath.EndsWith(".pdf.enc")) contentType = "application/pdf";
-                else if (transaction.DppInvoicePath.EndsWith(".jpg.enc")) contentType = "image/jpeg";
-                else if (transaction.DppInvoicePath.EndsWith(".png.enc")) contentType = "image/png";
+                if (path.EndsWith(".pdf.enc") || path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                    contentType = "application/pdf";
+                else if (path.EndsWith(".jpg.enc") || path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                      || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                    contentType = "image/jpeg";
+                else if (path.EndsWith(".png.enc") || path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                    contentType = "image/png";
 
-                return File(fileBytes, contentType, Path.GetFileNameWithoutExtension(transaction.DppInvoicePath)); // Remove .enc
+                // Strip .enc from the download file name for encrypted files
+                var downloadName = Path.GetFileName(path);
+                if (downloadName.EndsWith(".enc", StringComparison.OrdinalIgnoreCase))
+                    downloadName = Path.GetFileNameWithoutExtension(downloadName);
+
+                _logger.LogInformation(
+                    "[Invoice] Served {Classification} document for transaction {TxId} to exporter {ExporterId}",
+                    transaction.DppClassification, id, exporterId);
+
+                return File(fileBytes, contentType, downloadName);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, "Decryption Failed: " + ex.Message);
+                _logger.LogError(ex, "[Invoice] Retrieval failed for transaction {TransactionId}", id);
+                return StatusCode(500, new { error = "Document retrieval failed.", details = ex.Message });
             }
         }
 
@@ -544,9 +569,12 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
                 .Where(f => !f.IsConfidential && !string.IsNullOrWhiteSpace(f.EncryptedValue))
                 .Select(f => f.EncryptedValue));
 
-            // 5. Classify + secure-store the QIR file (same RSA/AES pipeline as invoice)
+            // 5. Classify + conditionally secure the QIR file
+            //    NON_CONFIDENTIAL → plain file, QirEncryptionMetadata = null
+            //    CONFIDENTIAL     → AES-256-CBC + RSA .enc file
             string storagePath = Path.Combine(_env.ContentRootPath, "App_Data", "SecureInvoices");
-            string qirPath, qirClassification, qirEncryptionMetadata;
+            string qirPath, qirClassification;
+            string? qirEncryptionMetadata;
             try
             {
                 using var encStream = file.OpenReadStream();
@@ -560,9 +588,10 @@ namespace RubberIntelligence.API.Modules.Marketplace.Controllers
             }
 
             // 6. Persist QIR data; advance status to QirUploaded
+            //    QirEncryptionMetadata is null for NON_CONFIDENTIAL documents (plain file).
             transaction.QirPath               = qirPath;
             transaction.QirClassification     = qirClassification;
-            transaction.QirEncryptionMetadata = qirEncryptionMetadata;
+            transaction.QirEncryptionMetadata = qirEncryptionMetadata;   // null → not encrypted
             transaction.QirFields             = safeQirFields;
             transaction.Status                = "QirUploaded";
             transaction.LastUpdatedAt         = DateTime.UtcNow;
