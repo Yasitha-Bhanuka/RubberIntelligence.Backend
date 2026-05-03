@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+//This mock service perfectly simulates the exact process of hashing the IoT data, uploading metadata to IPFS, and generating a Smart Contract transaction hash, allowing us to accurately demonstrate the Web3 flow without incurring developer costs."
 
 namespace RubberIntelligence.API.Modules.Bidding.Services
 {

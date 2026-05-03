@@ -2,6 +2,9 @@ using Microsoft.AspNetCore.Mvc;
 using RubberIntelligence.API.Modules.PriceForecasting.DTOs;
 using RubberIntelligence.API.Modules.PriceForecasting.Services;
 
+
+//This controller receives API requests related to rubber price forecasting, sends them to the service layer, and returns the results to the client.
+
 namespace RubberIntelligence.API.Modules.PriceForecasting.Controllers
 {
     [ApiController]

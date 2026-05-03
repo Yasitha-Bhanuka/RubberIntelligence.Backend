@@ -6,6 +6,8 @@ using RubberIntelligence.API.Modules.Bidding.Models;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
+//talk directly to the MongoDB database.
+
 namespace RubberIntelligence.API.Modules.Bidding.Services
 {
     public class BiddingRepository : IBiddingRepository
