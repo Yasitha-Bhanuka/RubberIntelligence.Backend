@@ -103,24 +103,51 @@ namespace RubberIntelligence.API.Infrastructure.Security
 
         /// <summary>
         /// Lazy-loads or creates RSA-2048 provider for AES key wrapping.
-        /// In production, load from Azure Key Vault or env var.
-        /// In development, generates ephemeral key pair.
+        /// The key pair is persisted to a PEM file so that encrypted documents
+        /// remain accessible across server restarts.
+        /// In production, load from Azure Key Vault or env var instead.
         /// </summary>
         private RSA GetOrCreateRsaProvider()
         {
             if (_rsaProvider != null)
                 return _rsaProvider;
 
-            // TODO: In production, load RSA keys from Azure Key Vault or env var
-            // For now, generate ephemeral RSA-2048 key pair in dev
+            // Resolve PEM file path: env var → App_Data default
+            var pemDir = Path.Combine(_env.ContentRootPath, "App_Data", "Keys");
+            Directory.CreateDirectory(pemDir);
+            var pemPath = Path.Combine(pemDir, "rsa_dpp_keypair.pem");
+
             _rsaProvider = RSA.Create(2048);
+
+            if (File.Exists(pemPath))
+            {
+                // Load existing key pair from PEM file
+                var pem = File.ReadAllText(pemPath);
+                _rsaProvider.ImportFromPem(pem);
+                _logger.LogInformation(
+                    "[Security] RSA-2048 key pair loaded from {PemPath}", pemPath);
+            }
+            else
+            {
+                // First run: generate and persist the key pair
+                _rsaProvider = RSA.Create(2048);
+                var pem = _rsaProvider.ExportRSAPrivateKeyPem();
+                File.WriteAllText(pemPath, pem);
+
+                _logger.LogWarning(
+                    "[Security] RSA-2048 key pair generated and saved to {PemPath}. " +
+                    "This file contains the PRIVATE KEY — protect it accordingly. " +
+                    "In production, use Azure Key Vault instead of file-based keys.",
+                    pemPath);
+            }
 
             if (_env.IsDevelopment())
             {
                 _logger.LogWarning(
-                    "[Security][DEV ONLY] RSA-2048 key pair generated in-memory. " +
-                    "This key is NOT persistent across restarts. " +
-                    "In production, load from Azure Key Vault.");
+                    "[Security][DEV] RSA key pair is file-based at {PemPath}. " +
+                    "Encrypted documents will survive restarts. " +
+                    "For production, migrate to Azure Key Vault.",
+                    pemPath);
             }
 
             return _rsaProvider;
